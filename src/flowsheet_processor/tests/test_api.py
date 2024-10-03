@@ -21,13 +21,16 @@ from pyomo.environ import units as pyunits
 from pyomo.environ import Var, value
 from pyomo.environ import SolverStatus, TerminationCondition
 
+import flowsheet_processor.api as fsapi
+
+pytest.importorskip(
+    "watertap.flowsheets",
+    reason="watertap.flowsheets is currently required to be able to run tests",
+)
 from watertap.flowsheets.seawater_RO_desalination import seawater_RO_desalination as RO
 from watertap.flowsheets.dye_desalination import dye_desalination_ui as DD
 
-from watertap.ui import fsapi
-
-
-_log = logging.getLogger("idaes.watertap.ui.fsapi")
+_log = logging.getLogger("idaes.flowsheet_processor")
 _log.setLevel(logging.DEBUG)
 
 ERD_TYPE = "pressure_exchanger"
