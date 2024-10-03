@@ -1,0 +1,29 @@
+[build-system]
+requires = [
+    "setuptools >= 64",
+    "setuptools_scm >= 7",
+]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "flowsheet-processor" 
+readme = "README.md"
+dynamic = ["version"]
+dependencies = [
+    "pydantic >= 2, <3",
+    "pyomo",
+    "idaes-pse",
+]
+[project.optional-dependencies]
+testing = [
+    "pytest >= 8",
+    # watertap.flowsheets currently required to be able to run tests
+    "watertap==1.1.0",
+]
+
+[project.entry-points.pytest11]
+
+[tool.setuptools_scm]
+# https://setuptools-scm.readthedocs.io/en/v8.1.0/extending/
+version_scheme = "only-version"
+local_scheme = "node-and-date"
