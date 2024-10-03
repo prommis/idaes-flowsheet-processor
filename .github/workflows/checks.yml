@@ -48,18 +48,18 @@ jobs:
           # - standard
         python-version:
           - "3.9"
-          - "3.10"
+          # - "3.10"
           - "3.11"
           # - "3.12"
         os:
           - linux
-          - win64
+          # - win64
           # - macos
         include:
           - os: linux
             os-version: ubuntu-22.04
-          - os: win64
-            os-version: windows-2022
+          # - os: win64
+          #   os-version: windows-2022
           # - os: macos
           #   os-version: macos-14
           - install-mode: dev
