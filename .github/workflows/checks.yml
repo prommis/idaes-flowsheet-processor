@@ -93,7 +93,7 @@ jobs:
       - name: Run pytest
         run: |
           pip install pytest  # ensure pytest is installed (should do nothing if already present from requirements-dev.txt)
-          pytest --pyargs flowsheet_processor --verbose
+          pytest --pyargs idaes_flowsheet_processor --verbose
       - name: Upload coverage report as job artifact
         if: matrix.coverage
         uses: actions/upload-artifact@v4

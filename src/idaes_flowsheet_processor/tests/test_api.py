@@ -21,7 +21,7 @@ from pyomo.environ import units as pyunits
 from pyomo.environ import Var, value
 from pyomo.environ import SolverStatus, TerminationCondition
 
-import flowsheet_processor.api as fsapi
+import idaes_flowsheet_processor.api as fsapi
 
 pytest.importorskip(
     "watertap.flowsheets",
