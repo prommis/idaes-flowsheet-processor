@@ -6,7 +6,7 @@ requires = [
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "flowsheet-processor" 
+name = "idaes-flowsheet-processor" 
 readme = "README.md"
 dynamic = ["version"]
 dependencies = [
