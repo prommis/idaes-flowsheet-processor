@@ -38,8 +38,7 @@ except ImportError:
     import importlib_metadata as metadata
 
 # third-party
-import idaes.logger as idaeslog
-from idaes.core.util.model_statistics import degrees_of_freedom
+from pyomo.contrib.viewer.report import degrees_of_freedom
 from pydantic import BaseModel, Field, field_validator, ValidationInfo, ConfigDict
 import pyomo.environ as pyo
 
@@ -48,7 +47,7 @@ import pyomo.environ as pyo
 FSI = TypeVar("FSI", bound="FlowsheetInterface")
 
 
-_log = idaeslog.getLogger(__name__)
+_log = logging.getLogger(__name__)
 
 
 class UnsupportedObjType(TypeError):
