@@ -84,7 +84,8 @@ jobs:
         name: Install (standard)
         run: |
           pip install "git+${{ format('{0}/{1}@{2}', github.server_url, github.repository, github.ref) }}"
-      - name: Install (idaes-solvers)
+      - if: matrix.install-mode == 'dev'
+        name: Install (idaes-solvers)
         run: |
           idaes get-extensions
       - if: matrix.coverage
