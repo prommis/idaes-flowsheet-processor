@@ -178,19 +178,22 @@ class IdaesFlowsheetsPlugin:
         )
         return [prefix + line for line in out]
 
-    def pytest_collect_directory(self, parent) -> FlowsheetInterfacesCollector | None:
-        if not isinstance(parent, pytest.Session):
-            # this check should ensure that the collector for this plugin
-            # is only created once;
-            # we don't otherwise use the fact that this is collecting a directory
-            return
-        return FlowsheetInterfacesCollector.from_parent(
-            parent,
-            name=self._registered_as,
-            test_class=self._test_class,
-            entry_points=self._entry_points,
-            modules=self._modules,
-        )
+    @pytest.hookimpl(wrapper=True)
+    def pytest_make_collect_report(self, collector: pytest.Collector):
+        # this "injects" our custom collector so that it appears as a direct child of the
+        # pytest.Session instance, and doesn't interfere with other top-level collectors,
+        # including the `pytest.Directory` which is the root of usual Python tests
+        report: pytest.CollectReport = yield
+        if isinstance(collector, pytest.Session):
+            our_collector = FlowsheetInterfacesCollector.from_parent(
+                collector,
+                name=self._registered_as,
+                test_class=self._test_class,
+                entry_points=self._entry_points,
+                modules=self._modules,
+            )
+            report.result.append(our_collector)
+        return report
 
     def pytest_generate_tests(self, metafunc: pytest.Metafunc) -> None:
         if "flowsheet_interface" in metafunc.fixturenames:
@@ -229,7 +232,13 @@ class IdaesFlowsheetsPlugin:
         return interface
 
     def pytest_collection_modifyitems(self, items: list[pytest.Item]) -> None:
-        items.sort(key=lambda item: item.get_closest_marker(self._marker_name).args)
+        def _sort_key(item: pytest.Item):
+            marker = item.get_closest_marker(self._marker_name)
+            if marker is None:
+                return tuple()
+            return marker.args
+
+        items.sort(key=_sort_key)
 
 
 plugin = IdaesFlowsheetsPlugin()
