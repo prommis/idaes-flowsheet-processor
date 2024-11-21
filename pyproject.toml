@@ -22,6 +22,7 @@ testing = [
 ]
 
 [project.entry-points.pytest11]
+idaes-flowsheets = "idaes_flowsheet_processor._testing.plugins:plugin"
 
 [tool.setuptools_scm]
 # https://setuptools-scm.readthedocs.io/en/v8.1.0/extending/
