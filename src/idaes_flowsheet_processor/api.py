@@ -16,6 +16,7 @@ Simple flowsheet interface API
 __author__ = "Dan Gunter"
 
 # stdlib
+import importlib
 from collections import namedtuple
 from csv import reader, writer
 from enum import Enum
