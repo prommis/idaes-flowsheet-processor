@@ -1,3 +1,6 @@
+from __future__ import (
+    annotations,
+)  # allows using A | B syntax for unions in Python < 3.10
 import importlib
 from collections.abc import Iterable
 from collections.abc import Mapping
@@ -5,7 +8,11 @@ from importlib.metadata import entry_points
 from importlib.metadata import EntryPoint
 from pathlib import Path
 from types import ModuleType
-from typing import TypeAlias
+
+try:
+    from typing import TypeAlias
+except ImportError:
+    TypeAlias = type
 
 import pytest
 

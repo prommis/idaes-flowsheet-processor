@@ -1,3 +1,6 @@
+from __future__ import (
+    annotations,
+)  # allows using A | B syntax for unions in Python < 3.10
 import importlib
 import sys
 from functools import singledispatch
