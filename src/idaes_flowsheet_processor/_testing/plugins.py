@@ -191,6 +191,7 @@ class IdaesFlowsheetsPlugin:
                 test_class=self._test_class,
                 entry_points=self._entry_points,
                 modules=self._modules,
+                nodeid=self._registered_as,
             )
             report.result.append(our_collector)
         return report
