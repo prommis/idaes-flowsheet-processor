@@ -40,14 +40,18 @@ def _(module_name: str) -> Path:
 
 
 def get_entry_points(group_name: str) -> list[EntryPoint]:
-    eps = entry_points()
+    all_eps = entry_points()
     try:
         # this happens for Python 3.10+
-        eps_for_group = list(eps.select(group=group_name))
+        eps = all_eps.select(group=group_name)
     except AttributeError:
         # this will happen on Python 3.9, where entry_points() has dict-like group selection
-        eps_for_group = list(eps[group_name])
-    return eps_for_group
+        eps = all_eps[group_name]
+    # creating a temp dict with eps as keys and placeholder values
+    # lets us remove duplicates while preserving insertion order (ordered set)
+    # since EntryPoint instances are hashable
+    unique_eps = list({ep: ... for ep in eps}.keys())
+    return unique_eps
 
 
 def get_test_class(cls: type | str, parent: pytest.Collector) -> pytest.Class:
