@@ -18,10 +18,11 @@ testing = [
     "pytest >= 8",
     "idaes-pse",
     # watertap.flowsheets currently required to be able to run tests
-    "watertap==1.1.0rc0",
+    "watertap @ git+https://github.com/watertap-org/watertap@refs/pull/1518/merge",
 ]
 
 [project.entry-points.pytest11]
+idaes-flowsheets = "idaes_flowsheet_processor._testing.plugins:plugin"
 
 [tool.setuptools_scm]
 # https://setuptools-scm.readthedocs.io/en/v8.1.0/extending/
