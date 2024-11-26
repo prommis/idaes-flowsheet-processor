@@ -18,7 +18,7 @@ testing = [
     "pytest >= 8",
     "idaes-pse",
     # watertap.flowsheets currently required to be able to run tests
-    "watertap @ git+https://github.com/watertap-org/watertap@refs/pull/1518/merge",
+    "watertap @ git+https://github.com/watertap-org/watertap@main",
 ]
 
 [project.entry-points.pytest11]
