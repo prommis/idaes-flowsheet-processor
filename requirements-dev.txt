@@ -1,4 +1,9 @@
 black==24.8.0
 pytest-cov==5.0.*
 
+Sphinx==7.1.2 ; python_version < '3.9'
+Sphinx==7.3.7 ; python_version >= '3.9'
+sphinx-autoapi==3.0.0
+sphinx-rtd-theme==2.0.0
+
 --editable .[testing]
