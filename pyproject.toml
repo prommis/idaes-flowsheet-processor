@@ -18,7 +18,9 @@ testing = [
     "pytest >= 8",
     "idaes-pse",
     # watertap.flowsheets currently required to be able to run tests
-    "watertap @ git+https://github.com/watertap-org/watertap@main",
+    # requirements in pyproject.toml cannot use git+https://... URLs
+    # or PyPI upload will fail
+    "watertap",
 ]
 
 [project.entry-points.pytest11]
