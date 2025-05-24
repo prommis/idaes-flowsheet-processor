@@ -52,11 +52,7 @@ _log = logging.getLogger(__name__)
 
 
 class UnsupportedObjType(TypeError):
-    def __init__(
-        self,
-        obj: Any,
-        supported: Optional = None,
-    ):
+    def __init__(self, obj: Any, supported=None):
         msg = f"Object '{obj}' of type '{type(obj)}' is not supported."
         if supported is not None:
             msg += f"\nSupported: {supported}"
@@ -64,6 +60,14 @@ class UnsupportedObjType(TypeError):
         self.obj = obj
         self.supported = supported
 
+def ensure_supported(obj):
+    """Raise UnsupportedObjType if object type is not supported as an input/output"""
+        if not (
+            obj.is_variable_type()
+            or obj.is_expression_type()
+            or obj.is_parameter_type()
+        ):
+            raise UnsupportedObjType(obj, supported=cls._SupportedObjType)
 
 class ModelExport(BaseModel):
     """A variable, expression, or parameter."""
@@ -106,40 +110,10 @@ class ModelExport(BaseModel):
 
     @field_validator("obj")
     @classmethod
-    def ensure_obj_is_supported(cls, v):
+    def validate_obj(cls, v):
         if v is not None:
-            cls._ensure_supported_type(v)
+            ensure_supported(v)
         return v
-
-    @classmethod
-    def _ensure_supported_type(cls, obj: object):
-        is_valid = (
-            obj.is_variable_type()
-            or obj.is_expression_type()
-            or obj.is_parameter_type()
-            # TODO: add support for numbers with pyo.numvalue.is_numeric_data()
-        )
-        if is_valid:
-            return True
-        raise UnsupportedObjType(obj, supported=cls._SupportedObjType)
-
-    @classmethod
-    def _get_supported_obj(
-        cls, values: dict, field_name: str = "obj", allow_none: bool = False
-    ):
-        obj = values.get(field_name, None)
-        if not allow_none and obj is None:
-            raise TypeError(f"'{field_name}' is None but allow_none is False")
-        cls._ensure_supported_type(obj)
-        return obj
-
-    # NOTE: IMPORTANT: all validators used to set a dynamic default value
-    # should have the `always=True` option, or the validator won't be called
-    # when the value for that field is not passed
-    # (which is precisely when we need the default value)
-    # additionally, `pre=True` should be given if the field can at any point
-    # have a value that doesn't match its type annotation
-    # (e.g. `None` for a strict (non-`Optional` `bool` field)
 
     # Get value from object
     @field_validator("value")
@@ -147,7 +121,8 @@ class ModelExport(BaseModel):
     def validate_value(cls, v, info: ValidationInfo):
         if info.data.get("obj", None) is None:
             return v
-        obj = cls._get_supported_obj(info.data, allow_none=False)
+        obj = info.data
+        ensure_supported(obj)
         return pyo.value(obj)
 
     # Derive display_units from ui_units
@@ -164,11 +139,9 @@ class ModelExport(BaseModel):
     @classmethod
     def validate_name(cls, v, info: ValidationInfo):
         if not v:
-            obj = cls._get_supported_obj(info.data, allow_none=False)
-            try:
-                v = obj.name
-            except AttributeError:
-                pass
+            obj = info.data
+            ensure_supported(obj)
+            v = getattr(obj, "name", "unknown")
         return v
 
     @field_validator("is_readonly")
@@ -176,7 +149,8 @@ class ModelExport(BaseModel):
     def set_readonly_default(cls, v, info: ValidationInfo):
         if v is None:
             v = True
-            obj = cls._get_supported_obj(info.data, allow_none=False)
+            obj = info.data
+            ensure_supported(obj)
             if obj.is_variable_type() or (
                 obj.is_parameter_type() and obj.parent_component().mutable
             ):
@@ -187,9 +161,38 @@ class ModelExport(BaseModel):
     @classmethod
     def set_obj_key_default(cls, v, info: ValidationInfo):
         if v is None:
-            obj = cls._get_supported_obj(info.data, allow_none=False)
+            obj = info.data
+            ensure_supported(obj)
             v = str(obj)
         return v
+
+class KPI(BaseModel):
+    """Key Performance Indicator"""
+    name: str
+    is_vector: bool
+
+class KPIValue(KPI):
+    """Single value to display"""
+    is_vector: bool = False
+    value: float
+    units: str
+    desc: str
+
+class KPIVector(KPI):
+    """Vector of labeled values to compare.
+    This is used both for barcharts (where has_total=False)
+    and pie/treemap charts (where has_total=True).
+    In the latter case, xlab and ylab should be ignored.
+    In the former case, total should be ignored and ylab is the same as units.
+    """
+    is_vector: bool = True
+    has_total: bool = False
+    values: List[float] = []
+    labels: List[str] = []
+    xlab: str  = "" # assume vertical barchart
+    ylab: str  = "" # ..ditto..
+    total: float = 0.0
+    units: str = ""
 
 
 class ModelOption(BaseModel):
@@ -274,6 +277,7 @@ class FlowsheetExport(BaseModel):
     name: Union[None, str] = Field(default="", validate_default=True)
     description: Union[None, str] = Field(default="", validate_default=True)
     exports: Dict[str, ModelExport] = {}
+    kpis: Dict[str, KPI] = {}
     version: int = 2
     requires_idaes_solver: bool = False
     dof: int = 0
@@ -361,6 +365,38 @@ class FlowsheetExport(BaseModel):
             )
         self.exports[key] = model_export
         return model_export
+
+    def add_kpi_comparison(self, name: str, values: List[float], labels: List[str], description: str = None, units: str = None):
+        """Add a Key Performance Indicator (KPI) which compares multiple values as, e.g., a barchart.
+
+        Args:
+            name (str): Name of the KPI
+            values (List[float]): Numeric values
+            labels (List[str]): Labels corresponding to values
+            description (str, optional): Overall label for the types of things being compared
+            units (str, optional): Units for the values, e.g., "g/mol"
+        """
+        xlab = "" if description is None else description
+        kpi = KPIVector(name=name, values=values, labels=labels, xlab=xlab, ylab=units, has_total=False)
+        self.kpis[name] = kpi
+
+    def add_kpi_total(self, name:str, values: List[float], labels: List[str], units: str = "%"):
+        """dd a Key Performance Indicator (KPI) which compares multiple values as parts of a whole,
+        e.g., as a piechart or treemap.
+
+        Args:
+            name (str): Name of the KPI
+            values (List[float]): Numeric values
+            labels (List[str]): Labels corresponding to values
+            units (str, optional): Units for the values, e.g., "%" if they are percentages adding to 100
+        """
+        total = sum(values)
+        kpi = KPIVector(name=name, values=values, labels=labels, total=total, units=units, has_total=True)
+        self.kpis[name] = kpi
+
+    def add_kpi_value(self, name: str, value: float, units: str = "", description: str = ""):
+        kpi = KPIValue(name=name, value=value, units=units, desc=description)
+        self.kpis[name] = kpi
 
     def from_csv(self, file: Union[str, Path], flowsheet):
         """Load multiple exports from the given CSV file.
