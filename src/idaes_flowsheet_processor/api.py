@@ -167,33 +167,50 @@ class ModelExport(BaseModel):
         return v
 
 class KPI(BaseModel):
-    """Key Performance Indicator"""
+    """Key Performance Indicator
+    
+    Subclasses are structured as:
+
+    ```
+     (abstract) KPI
+     ----------------
+        ^        ^
+        |        |
+    KPIValue   KPIVector
+                 ^
+                 |
+               KPITotal
+    ```
+    """
     name: str
+    title: str
+    units: str = "none"
     is_vector: bool
 
 class KPIValue(KPI):
     """Single value to display"""
     is_vector: bool = False
     value: float
-    units: str
-    desc: str
 
 class KPIVector(KPI):
     """Vector of labeled values to compare.
     This is used both for barcharts (where has_total=False)
     and pie/treemap charts (where has_total=True).
-    In the latter case, xlab and ylab should be ignored.
-    In the former case, total should be ignored and ylab is the same as units.
     """
     is_vector: bool = True
     has_total: bool = False
     values: List[float] = []
     labels: List[str] = []
-    xlab: str  = "" # assume vertical barchart
-    ylab: str  = "" # ..ditto..
-    total: float = 0.0
-    units: str = ""
+    xlab: str
+    ylab: str
 
+class KPITotal(KPIVector):
+    """Will ignore xlab and ylab (in normal cases)"""
+    has_total: bool = True
+    total: float = 0.0
+    total_label: str = ""
+    xlab: str = ""
+    ylab: str = ""
 
 class ModelOption(BaseModel):
     """An option for building/running the model."""
@@ -366,36 +383,46 @@ class FlowsheetExport(BaseModel):
         self.exports[key] = model_export
         return model_export
 
-    def add_kpi_comparison(self, name: str, values: List[float], labels: List[str], description: str = None, units: str = None):
-        """Add a Key Performance Indicator (KPI) which compares multiple values as, e.g., a barchart.
+    def add_kpi_vector(self, name: str, values: List[float], labels: List[str], title: str,
+                       xlab: str = None, ylab: str = None,
+                       units: str = ""):
+        """Add a Key Performance Indicator (KPI) with multiple values
 
         Args:
             name (str): Name of the KPI
             values (List[float]): Numeric values
             labels (List[str]): Labels corresponding to values
-            description (str, optional): Overall label for the types of things being compared
-            units (str, optional): Units for the values, e.g., "g/mol"
+            title: Overall description
+            values_description (str, optional): Overall label for the values (e.g., "Compounds")
+            units (str, optional): Descriptive units for the values
         """
-        xlab = "" if description is None else description
-        kpi = KPIVector(name=name, values=values, labels=labels, xlab=xlab, ylab=units, has_total=False)
+        kpi = KPIVector(name=name, values=values, labels=labels, xlab=xlab, ylab=ylab, title=title, units=units)
         self.kpis[name] = kpi
 
-    def add_kpi_total(self, name:str, values: List[float], labels: List[str], units: str = "%"):
-        """dd a Key Performance Indicator (KPI) which compares multiple values as parts of a whole,
-        e.g., as a piechart or treemap.
+    def add_kpi_total(self, name:str, values: List[float], labels: List[str], title: str, total_label: str, units: str = "%"):
+        """Add a Key Performance Indicator (KPI) vector with multiple values and a total
 
         Args:
             name (str): Name of the KPI
             values (List[float]): Numeric values
             labels (List[str]): Labels corresponding to values
+            total_label: Label for the 'total' to which the values sum.
             units (str, optional): Units for the values, e.g., "%" if they are percentages adding to 100
         """
         total = sum(values)
-        kpi = KPIVector(name=name, values=values, labels=labels, total=total, units=units, has_total=True)
+        kpi = KPITotal(name=name, values=values, labels=labels, total=total, units=units, total_label=total_label, title=title)
         self.kpis[name] = kpi
 
-    def add_kpi_value(self, name: str, value: float, units: str = "", description: str = ""):
-        kpi = KPIValue(name=name, value=value, units=units, desc=description)
+    def add_kpi_value(self, name: str, value: float, title: str = "", units: str = ""):
+        """Add a Key Performance Indicator (KPI) with a single value.
+
+        Args:
+            name (str): Name of the KPI
+            value (float): Numeric value
+            title: Overall description
+            units (str, optional): Units for the value. Defaults to "".
+        """
+        kpi = KPIValue(name=name, value=value, units=units, title=title)
         self.kpis[name] = kpi
 
     def from_csv(self, file: Union[str, Path], flowsheet):
