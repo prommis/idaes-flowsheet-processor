@@ -28,10 +28,13 @@ except ImportError:
     from importlib_resources import files
 import inspect
 import logging
+from math import ceil
+from operator import itemgetter
 from pathlib import Path
 import re
 from typing import Any, Callable, List, Optional, Dict, Union, TypeVar
 from types import ModuleType
+
 
 try:
     from importlib import metadata
@@ -42,6 +45,11 @@ except ImportError:
 from pyomo.contrib.viewer.report import degrees_of_freedom
 from pydantic import BaseModel, Field, field_validator, ValidationInfo, ConfigDict
 import pyomo.environ as pyo
+import plotly.express as px
+import plotly.graph_objects as go
+import numpy as np
+import pandas as pd
+from IPython.core.display import HTML
 
 #: Forward-reference to a FlowsheetInterface type, used in
 #: :meth:`FlowsheetInterface.find`
@@ -60,24 +68,33 @@ class UnsupportedObjType(TypeError):
         self.obj = obj
         self.supported = supported
 
+
+_SupportedObjType = Union[
+    pyo.Var,
+    pyo.Expression,
+    pyo.Param,
+]
+"Used for type hints and as a shorthand in error messages (i.e. not for runtime checks)"
+
+
 def ensure_supported(obj):
     """Raise UnsupportedObjType if object type is not supported as an input/output"""
+    supported = True
+    try:
         if not (
             obj.is_variable_type()
             or obj.is_expression_type()
             or obj.is_parameter_type()
         ):
-            raise UnsupportedObjType(obj, supported=cls._SupportedObjType)
+            supported = False
+    except AttributeError:
+        supported = False
+    if not supported:
+        raise UnsupportedObjType(obj, supported=_SupportedObjType)
+
 
 class ModelExport(BaseModel):
     """A variable, expression, or parameter."""
-
-    _SupportedObjType = Union[
-        pyo.Var,
-        pyo.Expression,
-        pyo.Param,
-    ]
-    "Used for type hints and as a shorthand in error messages (i.e. not for runtime checks)"
 
     # TODO: if Optional[_SupportedObjType] is used for the `obj` type hint,
     # pydantic will run the runtime instance check which is not what we want
@@ -121,7 +138,7 @@ class ModelExport(BaseModel):
     def validate_value(cls, v, info: ValidationInfo):
         if info.data.get("obj", None) is None:
             return v
-        obj = info.data
+        obj = info.data["obj"]
         ensure_supported(obj)
         return pyo.value(obj)
 
@@ -149,7 +166,7 @@ class ModelExport(BaseModel):
     def set_readonly_default(cls, v, info: ValidationInfo):
         if v is None:
             v = True
-            obj = info.data
+            obj = info.data["obj"]
             ensure_supported(obj)
             if obj.is_variable_type() or (
                 obj.is_parameter_type() and obj.parent_component().mutable
@@ -161,56 +178,27 @@ class ModelExport(BaseModel):
     @classmethod
     def set_obj_key_default(cls, v, info: ValidationInfo):
         if v is None:
-            obj = info.data
+            obj = info.data["obj"]
             ensure_supported(obj)
             v = str(obj)
         return v
 
-class KPI(BaseModel):
-    """Key Performance Indicator
-    
-    Subclasses are structured as:
 
-    ```
-     (abstract) KPI
-     ----------------
-        ^        ^
-        |        |
-    KPIValue   KPIVector
-                 ^
-                 |
-               KPITotal
-    ```
-    """
+class KPI(BaseModel):
+    """Key Performance Indicator"""
+
+    is_vector: bool
+    has_total: bool
     name: str
     title: str
     units: str = "none"
-    is_vector: bool
-
-class KPIValue(KPI):
-    """Single value to display"""
-    is_vector: bool = False
-    value: float
-
-class KPIVector(KPI):
-    """Vector of labeled values to compare.
-    This is used both for barcharts (where has_total=False)
-    and pie/treemap charts (where has_total=True).
-    """
-    is_vector: bool = True
-    has_total: bool = False
     values: List[float] = []
     labels: List[str] = []
-    xlab: str
-    ylab: str
-
-class KPITotal(KPIVector):
-    """Will ignore xlab and ylab (in normal cases)"""
-    has_total: bool = True
-    total: float = 0.0
-    total_label: str = ""
     xlab: str = ""
     ylab: str = ""
+    total: float = 0.0
+    total_label: str = ""
+
 
 class ModelOption(BaseModel):
     """An option for building/running the model."""
@@ -383,9 +371,43 @@ class FlowsheetExport(BaseModel):
         self.exports[key] = model_export
         return model_export
 
-    def add_kpi_vector(self, name: str, values: List[float], labels: List[str], title: str,
-                       xlab: str = None, ylab: str = None,
-                       units: str = ""):
+    def add_kpi_value(
+        self, name: str, value: float, label: str = "", title: str = "", units: str = ""
+    ):
+        """Add a Key Performance Indicator (KPI) with a single value.
+
+        Args:
+            name (str): Name of the KPI
+            value (float): Numeric value
+            label (str): Label for the numeric value
+            title: Overall description
+            units (str, optional): Units for the value. Defaults to "".
+        """
+        if not title:
+            title = label
+        elif not label:
+            label = title
+        kpi = KPI(
+            is_vector=False,
+            has_total=False,
+            name=name,
+            title=title,
+            values=[value],
+            labels=[label],
+            units=units,
+        )
+        self.kpis[name] = kpi
+
+    def add_kpi_vector(
+        self,
+        name: str,
+        values: List[float],
+        labels: List[str],
+        title: str,
+        xlab: str = None,
+        ylab: str = None,
+        units: str = "",
+    ):
         """Add a Key Performance Indicator (KPI) with multiple values
 
         Args:
@@ -396,10 +418,28 @@ class FlowsheetExport(BaseModel):
             values_description (str, optional): Overall label for the values (e.g., "Compounds")
             units (str, optional): Descriptive units for the values
         """
-        kpi = KPIVector(name=name, values=values, labels=labels, xlab=xlab, ylab=ylab, title=title, units=units)
+        kpi = KPI(
+            is_vector=True,
+            has_total=False,
+            name=name,
+            title=title,
+            units=units,
+            values=values,
+            labels=labels,
+            xlab=xlab,
+            ylab=ylab,
+        )
         self.kpis[name] = kpi
 
-    def add_kpi_total(self, name:str, values: List[float], labels: List[str], title: str, total_label: str, units: str = "%"):
+    def add_kpi_total(
+        self,
+        name: str,
+        values: List[float],
+        labels: List[str],
+        title: str,
+        total_label: str,
+        units: str = "%",
+    ):
         """Add a Key Performance Indicator (KPI) vector with multiple values and a total
 
         Args:
@@ -410,19 +450,17 @@ class FlowsheetExport(BaseModel):
             units (str, optional): Units for the values, e.g., "%" if they are percentages adding to 100
         """
         total = sum(values)
-        kpi = KPITotal(name=name, values=values, labels=labels, total=total, units=units, total_label=total_label, title=title)
-        self.kpis[name] = kpi
-
-    def add_kpi_value(self, name: str, value: float, title: str = "", units: str = ""):
-        """Add a Key Performance Indicator (KPI) with a single value.
-
-        Args:
-            name (str): Name of the KPI
-            value (float): Numeric value
-            title: Overall description
-            units (str, optional): Units for the value. Defaults to "".
-        """
-        kpi = KPIValue(name=name, value=value, units=units, title=title)
+        kpi = KPI(
+            is_vector=True,
+            has_total=True,
+            name=name,
+            title=title,
+            units=units,
+            values=values,
+            labels=labels,
+            total=total,
+            total_label=total_label,
+        )
         self.kpis[name] = kpi
 
     def from_csv(self, file: Union[str, Path], flowsheet):
@@ -1116,3 +1154,161 @@ class FlowsheetInterface:
             return None
         # Return created FlowsheetInterface
         return interface
+
+    def report(self, **kwargs) -> "FlowsheetReport":
+        return FlowsheetReport(self.fs_exp, **kwargs)
+
+
+class _TotalChartTypes(Enum):
+    waffle = 1
+    donut = 2
+
+
+WAFFLE = _TotalChartTypes.waffle
+DONUT = _TotalChartTypes.donut
+
+
+class FlowsheetReport:
+
+    VALUE_FONT_NAME_SIZE = "150%"
+    VALUE_FONT_VAL_SIZE = "180%"
+    VALUE_FONT_NAME_COLOR = "#666"
+    VALUE_FONT_VAL_COLOR = "#66F"
+    VALUE_SEP_WIDTH = "7px"
+
+    def __init__(self, flowsheet_export, total_chart_type=_TotalChartTypes.donut):
+        self.kpis = flowsheet_export.dict()["kpis"]
+        self._total_type = total_chart_type
+
+    def _repr_html_(self):
+        divs = []
+        for key, val in self.kpis.items():
+            if val["is_vector"]:
+                if val["has_total"]:
+                    item = self.create_part_whole(self.kpis, key, self._total_type)
+                else:
+                    item = self.create_barchart(self.kpis, key)
+            else:
+                item = self.create_single_value(self.kpis, key)
+            divs.append(item)
+        html = "".join((f"<div>{content}</div>" for content in divs))
+        return html
+
+    @classmethod
+    def create_barchart(cls, kpis, item):
+        d = kpis[item]
+        df = pd.DataFrame(dict(y=d["values"], x=d["labels"]))
+        u = f" ({d['units']})"
+        fig = px.bar(
+            df,
+            x="x",
+            y="y",
+            labels={"x": d["xlab"], "y": d["ylab"] + u},
+            title=d["title"],
+        )
+        return fig.to_html()
+
+    @classmethod
+    def create_part_whole(cls, kpis, item, chart_type):
+        d = kpis[item]
+        if chart_type == _TotalChartTypes.donut:
+            fig = px.pie(
+                names=d["labels"], values=d["values"], hole=0.5, title=d["title"]
+            )
+        elif chart_type == _TotalChartTypes.waffle:
+            fig = cls._waffle_chart(d)
+        else:
+            raise ValueError(f"Unrecognized chart type: {chart_type}")
+        return fig.to_html()
+
+    @classmethod
+    def _waffle_chart(cls, d):
+        val_lab = list(zip(d["values"], d["labels"]))
+        val_lab.sort(key=itemgetter(0))
+        n = len(val_lab)
+        ttl = d["total"]
+        # create color values
+        val_pct = [int(ceil(val_lab[i][0] / ttl * 100)) for i in range(n)]
+        col_hex = px.colors.qualitative.Alphabet
+
+        def rgba(x):
+            return int(f"0x{x}", 16)
+
+        col_rgba = [(rgba(s[1:3]), rgba(s[3:5]), rgba(s[5:7]), 255) for s in col_hex]
+        vec = []
+        for i in range(n):
+            for j in range(val_pct[i]):
+                vec.append(col_rgba[i])
+        # reshape to 10x10 grid
+        nv = len(vec)
+        width = 10
+        # add padding at end to fit
+        rows = int(ceil(nv / 10))
+        for i in range(rows * width - nv):
+            vec.append((255, 255, 255, 255))
+        arr = np.array(vec, dtype=np.uint8)
+        z = arr.reshape(width, rows, 4)
+        # draw lines between squares
+        ncol, nrow = z.shape[0], z.shape[1]
+        fig = px.imshow(z, title=d["title"])
+        for i in range(ncol):
+            fig.add_shape(
+                type="line",
+                x0=i + 0.5,
+                y0=-0.5,
+                x1=i + 0.5,
+                y1=ncol - 0.5,
+                line={"color": "white", "width": 2},
+            )
+        for i in range(nrow - 1):
+            fig.add_shape(
+                type="line",
+                x0=-0.5,
+                y0=i + 0.5,
+                x1=nrow - 0.5,
+                y1=i + 0.5,
+                line={"color": "white", "width": 2},
+            )
+        # add fake traces for legend
+        for i, (val, lab) in enumerate(val_lab):
+            col = col_hex[i]
+            pct = val_pct[i]
+            short_val = f"{val:0.3g}"
+            fig.add_trace(
+                go.Scatter(
+                    x=[None],
+                    y=[None],
+                    mode="markers",
+                    name=f"{lab:2s}  {pct:2d}% {short_val}",
+                    marker=dict(size=7, color=col, symbol="square"),
+                )
+            )
+        # get rid of borders, ticks, etc.
+        fig.update_layout(
+            width=600, xaxis_visible=False, yaxis_visible=False, showlegend=True
+        )
+        # choose fonts & colors
+        fig.update_layout(
+            font_family="Courier New",
+            font_color="#333",
+            title_font_family="Times New Roman",
+            legend_title_font_color="green",
+        )
+        return fig
+
+    @classmethod
+    def create_single_value(cls, kpis, item, fmtspec=".6f"):
+        d = kpis[item]
+        value = d["values"][0]
+        fvalue = format(value, fmtspec)
+        if d["units"]:
+            u = d["units"]
+            if u != "%":
+                u = f" ({u})"
+        else:
+            u = ""
+        s = f"<span style='font-size: {cls.VALUE_FONT_NAME_SIZE}; color: {cls.VALUE_FONT_NAME_COLOR}'>{d['title']}</span>"
+        s += f"<span style='margin-left: {cls.VALUE_SEP_WIDTH}'>&nbsp;</span>"
+        s += f"<span style='font-size: {cls.VALUE_FONT_VAL_SIZE}; color: {cls.VALUE_FONT_VAL_COLOR}'>{fvalue}{u}</span>"
+        p = f"<p style='margin-left: 2em'>{s}</p>"
+        return p
