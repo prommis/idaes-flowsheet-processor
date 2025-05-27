@@ -483,3 +483,79 @@ def test_add_option(tmpdir):
             values_allowed=["valid option a", "valid option b"],
             value="invalid option",
         )
+
+
+@pytest.mark.unit
+def test_flowsheet_export_kpi():
+    exp = fsapi.FlowsheetExport()
+    # create
+    single = "single"
+    exp.add_kpi_value(
+        single, 1.2, label="single label", title="single title", units="singleUnits"
+    )
+    vector = "vector"
+    exp.add_kpi_vector(
+        vector,
+        values=[1.2, -1.2],
+        labels=["vlabel1", "vlabel2"],
+        title="vector title",
+        units="vectorUnits",
+        xlab="x label",
+        ylab="y label",
+    )
+    total = "total"
+    exp.add_kpi_total(
+        total,
+        values=[1.2, -1.2],
+        labels=["tlabel1", "tlabel2"],
+        title="total title",
+        units="totalUnits",
+        total_label="total label",
+    )
+    # validate
+    kpis = exp.model_dump()["kpis"]
+    expect = {
+        single: {
+            "is_vector": False,
+            "has_total": False,
+            "name": "single",
+            "title": "single title",
+            "units": "singleUnits",
+            "values": [1.2],
+            "labels": ["single label"],
+            "xlab": "",
+            "ylab": "",
+            "total": 0.0,
+            "total_label": "",
+        },
+        vector: {
+            "is_vector": True,
+            "has_total": False,
+            "name": "vector",
+            "title": "vector title",
+            "units": "vectorUnits",
+            "values": [1.2, -1.2],
+            "labels": ["vlabel1", "vlabel2"],
+            "xlab": "x label",
+            "ylab": "y label",
+            "total": 0.0,
+            "total_label": "",
+        },
+        total: {
+            "is_vector": True,
+            "has_total": True,
+            "name": "total",
+            "title": "total title",
+            "units": "totalUnits",
+            "values": [1.2, -1.2],
+            "labels": ["tlabel1", "tlabel2"],
+            "xlab": "",
+            "ylab": "",
+            "total": 0.0,
+            "total_label": "total label",
+        },
+    }
+    for name in (single, vector, total):
+        got = kpis[name]
+        for k in got:
+            assert got[k] == expect[name][k]

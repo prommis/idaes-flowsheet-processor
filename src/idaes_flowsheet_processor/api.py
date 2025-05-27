@@ -1159,98 +1159,131 @@ class FlowsheetInterface:
         return FlowsheetReport(self.fs_exp, **kwargs)
 
 
-class _TotalChartTypes(Enum):
+class _ChartTypes(Enum):
     waffle = 1
     donut = 2
 
 
-WAFFLE = _TotalChartTypes.waffle
-DONUT = _TotalChartTypes.donut
+WAFFLE = _ChartTypes.waffle
+DONUT = _ChartTypes.donut
 
 
 class FlowsheetReport:
+    """Report of the Key Performance Indicators (KPIs) for a flowsheet.
 
+    The specification of the report is extracted from the FlowsheetExport object
+    that is passed to the class constructor.
+    """
+
+    # Some settings for HTML display
     VALUE_FONT_NAME_SIZE = "150%"
     VALUE_FONT_VAL_SIZE = "180%"
     VALUE_FONT_NAME_COLOR = "#666"
     VALUE_FONT_VAL_COLOR = "#66F"
     VALUE_SEP_WIDTH = "7px"
 
-    def __init__(self, flowsheet_export, total_chart_type=_TotalChartTypes.donut):
-        self.kpis = flowsheet_export.dict()["kpis"]
+    def __init__(
+        self, flowsheet_export: FlowsheetExport, total_chart_type=_ChartTypes.donut
+    ):
+        self._kpis = flowsheet_export.kpis
         self._total_type = total_chart_type
 
-    def _repr_html_(self):
-        divs = []
-        for key, val in self.kpis.items():
-            if val["is_vector"]:
-                if val["has_total"]:
-                    item = self.create_part_whole(self.kpis, key, self._total_type)
-                else:
-                    item = self.create_barchart(self.kpis, key)
-            else:
-                item = self.create_single_value(self.kpis, key)
-            divs.append(item)
-        html = "".join((f"<div>{content}</div>" for content in divs))
-        return html
+    def html(self) -> str:
+        """Return the report as an HTML fragment.
+        The resulting HTML will be wrapped in a <div> with class 'report'.
 
-    @classmethod
-    def create_barchart(cls, kpis, item):
-        d = kpis[item]
-        df = pd.DataFrame(dict(y=d["values"], x=d["labels"]))
-        u = f" ({d['units']})"
+        Returns:
+            HTML for the report
+        """
+        divs = []
+        for key, kpi in self._kpis.items():
+            if kpi.is_vector:
+                if kpi.has_total:
+                    item = self.create_part_whole(kpi)
+                else:
+                    item = self.create_barchart(kpi)
+            else:
+                item = self.create_single_value(kpi)
+            divs.append(item)
+        return "".join(
+            (
+                "<div class='report'>",
+                "".join((f"<div>{content}</div>" for content in divs)),
+                "</div>",
+            )
+        )
+
+    _repr_html_ = html  # display automatically in Jupyter Notebooks
+
+    def create_barchart(self, kpi: KPI) -> str:
+        """Create a barchart from a vector of values
+
+        Args:
+            kpi: Key performance indicator
+
+        Returns:
+            HTML of the figure
+        """
+        df = pd.DataFrame(dict(y=kpi.values, x=kpi.labels))
+        u = f" ({kpi.units})"
         fig = px.bar(
             df,
             x="x",
             y="y",
-            labels={"x": d["xlab"], "y": d["ylab"] + u},
-            title=d["title"],
+            labels={"x": kpi.xlab, "y": kpi.ylab + u},
+            title=kpi.title,
         )
         return fig.to_html()
 
-    @classmethod
-    def create_part_whole(cls, kpis, item, chart_type):
-        d = kpis[item]
-        if chart_type == _TotalChartTypes.donut:
-            fig = px.pie(
-                names=d["labels"], values=d["values"], hole=0.5, title=d["title"]
-            )
-        elif chart_type == _TotalChartTypes.waffle:
-            fig = cls._waffle_chart(d)
-        else:
-            raise ValueError(f"Unrecognized chart type: {chart_type}")
+    def create_part_whole(self, kpi: KPI) -> str:
+        """Create diagram for a vector that should be represented as parts of a total.
+        This will be either a pie (donut) chart or waffle chart.
+
+        Args:
+            kpi: Key performance indicator
+
+        Returns:
+            HTML of the figure
+        """
+        if self._total_type == _ChartTypes.donut:
+            fig = px.pie(names=kpi.labels, values=kpi.values, hole=0.5, title=kpi.title)
+        else:  # self._total_type == _ChartTypes.waffle
+            fig = self._waffle_chart(kpi)
         return fig.to_html()
 
-    @classmethod
-    def _waffle_chart(cls, d):
-        val_lab = list(zip(d["values"], d["labels"]))
+    def _waffle_chart(self, kpi):
+        """Create a waffle chart using the imshow() plot."""
+        # sort (value, label) pairs by value
+        val_lab = list(zip(kpi.values, kpi.labels))
         val_lab.sort(key=itemgetter(0))
         n = len(val_lab)
-        ttl = d["total"]
-        # create color values
-        val_pct = [int(ceil(val_lab[i][0] / ttl * 100)) for i in range(n)]
+        ttl = kpi.total
+        # convert colors to (r,g,b,a) tuples
         col_hex = px.colors.qualitative.Alphabet
-
-        def rgba(x):
-            return int(f"0x{x}", 16)
-
-        col_rgba = [(rgba(s[1:3]), rgba(s[3:5]), rgba(s[5:7]), 255) for s in col_hex]
+        col_rgba = [
+            (int(s[1:3], 16), int(s[3:5], 16), int(s[5:7], 16), 255) for s in col_hex
+        ]
+        # calculate how many boxes to draw for each value
+        # Note: this may be more than the grid size due to ceil() function
+        width = 20
+        grid_sz = width * width
+        val_grid = [int(ceil(val_lab[i][0] / ttl * grid_sz)) for i in range(n)]
         vec = []
         for i in range(n):
-            for j in range(val_pct[i]):
+            for j in range(val_grid[i]):
                 vec.append(col_rgba[i])
-        # reshape to 10x10 grid
+        # reshape to width x width grid
         nv = len(vec)
-        width = 10
-        # add padding at end to fit
-        rows = int(ceil(nv / 10))
+        # add empty squares at end of last row
+        rows = int(ceil(nv / width))
         for i in range(rows * width - nv):
             vec.append((255, 255, 255, 255))
         arr = np.array(vec, dtype=np.uint8)
         z = arr.reshape(width, rows, 4)
         # draw lines between squares
         ncol, nrow = z.shape[0], z.shape[1]
-        fig = px.imshow(z, title=d["title"])
+        fig = px.imshow(z, title=kpi.title)
+        line_style = {"color": "white", "width": 2}
         for i in range(ncol):
             fig.add_shape(
                 type="line",
@@ -1258,7 +1291,7 @@ class FlowsheetReport:
                 y0=-0.5,
                 x1=i + 0.5,
                 y1=ncol - 0.5,
-                line={"color": "white", "width": 2},
+                line=line_style,
             )
         for i in range(nrow - 1):
             fig.add_shape(
@@ -1267,48 +1300,63 @@ class FlowsheetReport:
                 y0=i + 0.5,
                 x1=nrow - 0.5,
                 y1=i + 0.5,
-                line={"color": "white", "width": 2},
+                line=line_style,
             )
-        # add fake traces for legend
+        # add fake traces to create a legend
+        scatter_kw = dict(x=[None], y=[None], mode="markers")
         for i, (val, lab) in enumerate(val_lab):
             col = col_hex[i]
-            pct = val_pct[i]
+            mark = dict(size=7, color=col, symbol="square")
+            grid_pct = 100 / grid_sz
+            if val / ttl < 1 / grid_sz:
+                pct_str = f"<{grid_pct:.2f}%"
+            else:
+                pct = int(val_grid[i] * grid_pct)
+                pct_str = f"{pct:2d}%"
             short_val = f"{val:0.3g}"
-            fig.add_trace(
-                go.Scatter(
-                    x=[None],
-                    y=[None],
-                    mode="markers",
-                    name=f"{lab:2s}  {pct:2d}% {short_val}",
-                    marker=dict(size=7, color=col, symbol="square"),
-                )
-            )
-        # get rid of borders, ticks, etc.
+            name = f"{lab:2s}  {pct_str} {short_val}"
+            fig.add_trace(go.Scatter(name=name, marker=mark, **scatter_kw))
+        # style plot
         fig.update_layout(
-            width=600, xaxis_visible=False, yaxis_visible=False, showlegend=True
-        )
-        # choose fonts & colors
-        fig.update_layout(
-            font_family="Courier New",
+            width=800,
+            xaxis_visible=False,
+            yaxis_visible=False,
+            showlegend=True,
+            font_family="Courier New",  # fixed-width
             font_color="#333",
-            title_font_family="Times New Roman",
-            legend_title_font_color="green",
+            title_font_family="Arial",
+            legend_title_font_color="#666",
         )
         return fig
 
-    @classmethod
-    def create_single_value(cls, kpis, item, fmtspec=".6f"):
-        d = kpis[item]
-        value = d["values"][0]
+    def create_single_value(self, kpi: KPI, fmtspec: str = ".6f") -> str:
+        """Create 'diagram' for a single value.
+
+        Args:
+            kpi: Key performance indicator
+            fmtspec (str, optional): Format specification for the value. Defaults to ".6f".
+
+        Returns:
+            HTML of the figure
+        """
+        value = kpi.values[0]  # it's always a list of length 1
         fvalue = format(value, fmtspec)
-        if d["units"]:
-            u = d["units"]
+        # represent units
+        if kpi.units:
+            u = kpi.units
             if u != "%":
                 u = f" ({u})"
         else:
             u = ""
-        s = f"<span style='font-size: {cls.VALUE_FONT_NAME_SIZE}; color: {cls.VALUE_FONT_NAME_COLOR}'>{d['title']}</span>"
-        s += f"<span style='margin-left: {cls.VALUE_SEP_WIDTH}'>&nbsp;</span>"
-        s += f"<span style='font-size: {cls.VALUE_FONT_VAL_SIZE}; color: {cls.VALUE_FONT_VAL_COLOR}'>{fvalue}{u}</span>"
+        # style label and value
+        s = (
+            f"<span style='font-size: {self.VALUE_FONT_NAME_SIZE}; "
+            + f"color: {self.VALUE_FONT_NAME_COLOR}'>{kpi.title}</span>"
+        )
+        s += f"<span style='margin-left: {self.VALUE_SEP_WIDTH}'>&nbsp;</span>"
+        s += (
+            f"<span style='font-size: {self.VALUE_FONT_VAL_SIZE}; "
+            + f"color: {self.VALUE_FONT_VAL_COLOR}'>{fvalue}{u}</span>"
+        )
         p = f"<p style='margin-left: 2em'>{s}</p>"
         return p
