@@ -283,6 +283,8 @@ class FlowsheetExport(BaseModel):
     description: Union[None, str] = Field(default="", validate_default=True)
     exports: Dict[str, ModelExport] = {}
     kpis: Dict[str, KPI] = {}
+    kpi_order: list[str] = []
+    kpi_options: Dict = {}
     version: int = 2
     requires_idaes_solver: bool = False
     dof: int = 0
@@ -397,6 +399,7 @@ class FlowsheetExport(BaseModel):
             units=units,
         )
         self.kpis[name] = kpi
+        self.kpi_order.append(name)
 
     def add_kpi_vector(
         self,
@@ -430,6 +433,7 @@ class FlowsheetExport(BaseModel):
             ylab=ylab,
         )
         self.kpis[name] = kpi
+        self.kpi_order.append(name)
 
     def add_kpi_total(
         self,
@@ -462,6 +466,10 @@ class FlowsheetExport(BaseModel):
             total_label=total_label,
         )
         self.kpis[name] = kpi
+        self.kpi_order.append(name)
+
+    def set_kpi_default_options(self, **options):
+        self.kpi_options = options
 
     def from_csv(self, file: Union[str, Path], flowsheet):
         """Load multiple exports from the given CSV file.
@@ -1155,7 +1163,19 @@ class FlowsheetInterface:
         # Return created FlowsheetInterface
         return interface
 
-    def report(self, **kwargs) -> "FlowsheetReport":
+    def report(self, total_type=None, **kwargs) -> "FlowsheetReport":
+        """Create HTML flowsheet report.
+
+        Args:
+            total_type: Either 'waffle' or 'donut'
+            kwargs: Additional keywords passed to :class:`FlowsheetReport`
+
+        Raises:
+            ValueError: If the total_type argument is invalid
+
+        Returns:
+            FlowsheetReport: A flowsheet report, which will display automatically in Jupyter Notebooks.
+        """
         return FlowsheetReport(self.fs_exp, **kwargs)
 
 
@@ -1183,39 +1203,97 @@ class FlowsheetReport:
     VALUE_SEP_WIDTH = "7px"
 
     def __init__(
-        self, flowsheet_export: FlowsheetExport, total_chart_type=_ChartTypes.donut
+        self,
+        flowsheet_export: FlowsheetExport,
+        total_type: _ChartTypes = WAFFLE,
+        **kwargs,
     ):
-        self._kpis = flowsheet_export.kpis
-        self._total_type = total_chart_type
+        """Constructor.
 
-    def html(self) -> str:
-        """Return the report as an HTML fragment.
+        Args:
+            flowsheet_export (FlowsheetExport): Exported flowsheet
+            total_type (_ChartTypes, optional): How to represent 'total' information. Defaults to WAFFLE.
+            kwargs: Additional key/value pairs passed to the various `create_*` methods
+        """
+        self._kpis = flowsheet_export.kpis
+        self._kpi_ord = flowsheet_export.kpi_order
+        self._kpi_opt = flowsheet_export.kpi_options
+        self._total_type = total_type
+        self._init_layout = None
+        if "layout" in kwargs:
+            self._init_layout = kwargs["layout"]
+            del kwargs["layout"]
+        self._init_options = kwargs
+
+    def html(self, layout=None, **kwargs) -> str:
+        """Return the report as an HTML element.
         The resulting HTML will be wrapped in a <div> with class 'report'.
+
+        Args:
+            layout: Layout specification. See :class:`Layout` for format. If not given, lay out in one column.
+            kwargs: Options for the `create_*` methods.
 
         Returns:
             HTML for the report
         """
-        divs = []
-        for key, kpi in self._kpis.items():
-            if kpi.is_vector:
-                if kpi.has_total:
-                    item = self.create_part_whole(kpi)
-                else:
-                    item = self.create_barchart(kpi)
-            else:
-                item = self.create_single_value(kpi)
-            divs.append(item)
-        return "".join(
-            (
-                "<div class='report'>",
-                "".join((f"<div>{content}</div>" for content in divs)),
-                "</div>",
-            )
-        )
+        # combine options from user settings, constructor, and this method
+        options = dict(total_type=self._total_type)
+        options.update(self._kpi_opt)
+        options.update(self._init_options)
+        options.update(kwargs)
+        if "total_type" in options:
+            options["total_type"] = self._process_total_type(options["total_type"])
+        print(f"@@ OPTIONS: {options}")
+        # get HTML block for each KPI
+        kpi_map = {
+            key: self._kpi_html(kpi, **options) for key, kpi in self._kpis.items()
+        }
+        # if no provided layout, put each item in its own row
+        if layout is None and self._init_layout is not None:
+            layout = self._init_layout
+        spec = layout if layout else [[key] for key in self._kpi_ord]
+        # perform the layout
+        layout_obj = Layout(spec, kpi_map)
+        # return HTML
+        return layout_obj.html
 
     _repr_html_ = html  # display automatically in Jupyter Notebooks
 
-    def create_barchart(self, kpi: KPI) -> str:
+    @staticmethod
+    def _process_total_type(v):
+        if isinstance(v, _ChartTypes):
+            pass  # do nothing
+        elif isinstance(v, str):
+            s = v.lower().strip()
+            try:
+                v = _ChartTypes[s]
+            except KeyError:
+                raise ValueError(f"Unknown total_type: {v}")
+        else:
+            raise ValueError(
+                f"total_type value must be enumeration or string, got {type(v)}"
+            )
+        return v
+
+    @classmethod
+    def _kpi_html(cls, kpi, **options):
+        """Get HTML for one KPI.
+
+        Args:
+            options: Keyword options for the `create_*` method called
+                     to create this KPI.
+        """
+        if kpi.is_vector:
+            if kpi.has_total:
+                item = cls.create_total(kpi, **options)
+            else:
+                item = cls.create_barchart(kpi, **options)
+        else:
+            item = cls.create_value(kpi, **options)
+        return item
+
+    @classmethod
+    def create_barchart(cls, kpi: KPI, **ignore) -> str:
         """Create a barchart from a vector of values
 
         Args:
@@ -1235,7 +1313,8 @@ class FlowsheetReport:
         )
         return fig.to_html()
 
-    def create_part_whole(self, kpi: KPI) -> str:
+    @classmethod
+    def create_total(cls, kpi: KPI, total_type: _ChartTypes = WAFFLE, **ignore) -> str:
         """Create diagram for a vector that should be represented as parts of a total.
         This will be either a pie (donut) chart or waffle chart.
 
@@ -1245,13 +1324,14 @@ class FlowsheetReport:
         Returns:
             HTML of the figure
         """
-        if self._total_type == _ChartTypes.donut:
+        if total_type == DONUT:
             fig = px.pie(names=kpi.labels, values=kpi.values, hole=0.5, title=kpi.title)
-        else:  # self._total_type == _ChartTypes.waffle
-            fig = self._waffle_chart(kpi)
+        else:  # total_type == _ChartTypes.waffle
+            fig = cls._waffle_chart(kpi)
         return fig.to_html()
 
-    def _waffle_chart(self, kpi):
+    @classmethod
+    def _waffle_chart(cls, kpi):
         """Create a waffle chart using the imshow() plot."""
         # sort (value, label) pairs by value
         val_lab = list(zip(kpi.values, kpi.labels))
@@ -1329,12 +1409,14 @@ class FlowsheetReport:
         )
         return fig
 
-    def create_single_value(self, kpi: KPI, fmtspec: str = ".6f") -> str:
+    @classmethod
+    def create_value(cls, kpi: KPI, fmtspec: str = ".6f", stack=True, **ignore) -> str:
         """Create 'diagram' for a single value.
 
         Args:
             kpi: Key performance indicator
             fmtspec (str, optional): Format specification for the value. Defaults to ".6f".
+            stack (bool): Whether label and value should be stacked vertically
 
         Returns:
             HTML of the figure
@@ -1349,14 +1431,76 @@ class FlowsheetReport:
         else:
             u = ""
         # style label and value
-        s = (
-            f"<span style='font-size: {self.VALUE_FONT_NAME_SIZE}; "
-            + f"color: {self.VALUE_FONT_NAME_COLOR}'>{kpi.title}</span>"
+        title_span = (
+            f"<span style='font-size: {cls.VALUE_FONT_NAME_SIZE}; "
+            + f"color: {cls.VALUE_FONT_NAME_COLOR}'>{kpi.title}</span>"
         )
-        s += f"<span style='margin-left: {self.VALUE_SEP_WIDTH}'>&nbsp;</span>"
-        s += (
-            f"<span style='font-size: {self.VALUE_FONT_VAL_SIZE}; "
-            + f"color: {self.VALUE_FONT_VAL_COLOR}'>{fvalue}{u}</span>"
+        val_span = (
+            f"<span style='font-size: {cls.VALUE_FONT_VAL_SIZE}; "
+            + f"color: {cls.VALUE_FONT_VAL_COLOR}'>{fvalue}{u}</span>"
         )
-        p = f"<p style='margin-left: 2em'>{s}</p>"
+        if stack:
+            chunk = f"{title_span}<br/>{val_span}"
+        else:
+            sep = f"<span style='margin-left: {cls.VALUE_SEP_WIDTH}'>&nbsp;</span>"
+            chunk = f"{title_span}{sep}{val_span}"
+        p = f"<p style='margin-left: 2em'>{chunk}</p>"
         return p
+
+
+class Layout:
+    """Translate a simple layout specification into an HTML flex layout.
+
+    The specification takes the form of a (possibly nested) list of
+    names of the KPIs to display, where the outer list is a single
+    column and the next level are rows, then columns within each row, etc.
+
+    Some examples:
+
+    * `[ "kpi_one", "kpi_two", "kpi_three" ]` will display 4 rows, each the full column width.
+    * `[["kpi_one", "kpi_two", "kpi_three"]]` will display 1 row with items laid out horizontally
+    * `[[kpi_one, kpi_two], [kpi_three, kpi_four]]` will display a 2x2 grid
+    """
+
+    FLOW_COL, FLOW_ROW = "grid_column", "grid_row"
+
+    def __init__(self, spec, kpis: dict[str, str]):
+        """Create new layout.
+
+        Args:
+            spec: Layout specification (see class docstring)
+            kpis: Mapping of KPI names to HTML. These names should match names in `spec`.
+        """
+        self._kpis = kpis
+        self._divs = self._to_divs(spec, self.FLOW_COL)
+
+    @property
+    def html(self):
+        return f"<html><head><style>{self.css}</style><body>{self.body}</body></html>"
+
+    @property
+    def body(self):
+        return "".join(self._divs)
+
+    @property
+    def css(self):
+        rules = (
+            ".grid_row {display: flex; flex-direction: row;}",
+            ".grid_column {display: flex; flex-direction: column}",
+        )
+        return "\n".join(rules)
+
+    def _toggle_flow(self, flow):
+        return self.FLOW_COL if flow == self.FLOW_ROW else self.FLOW_ROW
+
+    def _to_divs(self, item, flow):
+        divs = [f"<div class='{flow}'>"]
+        if isinstance(item, list):
+            next_flow = self._toggle_flow(flow)
+            for child in item:
+                divs.extend(self._to_divs(child, next_flow))
+        else:
+            kpi_html = self._kpis[item]
+            divs.append(kpi_html)
+        divs.append("</div>")
+        return divs
