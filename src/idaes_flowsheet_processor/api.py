@@ -1163,11 +1163,10 @@ class FlowsheetInterface:
         # Return created FlowsheetInterface
         return interface
 
-    def report(self, total_type=None, **kwargs) -> "FlowsheetReport":
+    def report(self, **kwargs) -> "FlowsheetReport":
         """Create HTML flowsheet report.
 
         Args:
-            total_type: Either 'waffle' or 'donut'
             kwargs: Additional keywords passed to :class:`FlowsheetReport`
 
         Raises:
@@ -1205,7 +1204,7 @@ class FlowsheetReport:
     def __init__(
         self,
         flowsheet_export: FlowsheetExport,
-        total_type: _ChartTypes = WAFFLE,
+        total_type: _ChartTypes = None,
         **kwargs,
     ):
         """Constructor.
@@ -1218,12 +1217,13 @@ class FlowsheetReport:
         self._kpis = flowsheet_export.kpis
         self._kpi_ord = flowsheet_export.kpi_order
         self._kpi_opt = flowsheet_export.kpi_options
-        self._total_type = total_type
         self._init_layout = None
         if "layout" in kwargs:
             self._init_layout = kwargs["layout"]
             del kwargs["layout"]
         self._init_options = kwargs
+        if total_type:
+            self._init_options["total_type"] = total_type
 
     def html(self, layout=None, **kwargs) -> str:
         """Return the report as an HTML element.
@@ -1237,13 +1237,13 @@ class FlowsheetReport:
             HTML for the report
         """
         # combine options from user settings, constructor, and this method
-        options = dict(total_type=self._total_type)
+        options = {}
         options.update(self._kpi_opt)
         options.update(self._init_options)
         options.update(kwargs)
+        # special processing for total_type, if given
         if "total_type" in options:
-            options["total_type"] = self._process_total_type(options["total_type"])
-        print(f"@@ OPTIONS: {options}")
+            options["total_type"] = self._preprocess_total_type(options["total_type"])
         # get HTML block for each KPI
         kpi_map = {
             key: self._kpi_html(kpi, **options) for key, kpi in self._kpis.items()
@@ -1252,6 +1252,7 @@ class FlowsheetReport:
         if layout is None and self._init_layout is not None:
             layout = self._init_layout
         spec = layout if layout else [[key] for key in self._kpi_ord]
+        _log.debug(f"layout spec={spec}")
         # perform the layout
         layout_obj = Layout(spec, kpi_map)
         # return HTML
@@ -1260,7 +1261,7 @@ class FlowsheetReport:
     _repr_html_ = html  # display automatically in Jupyter Notebooks
 
     @staticmethod
-    def _process_total_type(v):
+    def _preprocess_total_type(v):
         if isinstance(v, _ChartTypes):
             pass  # do nothing
         elif isinstance(v, str):
@@ -1459,7 +1460,7 @@ class Layout:
 
     * `[ "kpi_one", "kpi_two", "kpi_three" ]` will display 4 rows, each the full column width.
     * `[["kpi_one", "kpi_two", "kpi_three"]]` will display 1 row with items laid out horizontally
-    * `[[kpi_one, kpi_two], [kpi_three, kpi_four]]` will display a 2x2 grid
+    * `[["kpi_one", "kpi_two"], ["kpi_three", "kpi_four"]]` will display a 2x2 grid
     """
 
     FLOW_COL, FLOW_ROW = "grid_column", "grid_row"
