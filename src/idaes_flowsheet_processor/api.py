@@ -157,8 +157,10 @@ class ModelExport(BaseModel):
     def validate_name(cls, v, info: ValidationInfo):
         if not v:
             obj = info.data
-            ensure_supported(obj)
-            v = getattr(obj, "name", "unknown")
+            # if initializing from a dict, skip this
+            if not isinstance(obj, dict):
+                ensure_supported(obj)
+                v = getattr(obj, "name", "unknown")
         return v
 
     @field_validator("is_readonly")
