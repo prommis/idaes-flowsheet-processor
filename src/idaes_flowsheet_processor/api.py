@@ -32,7 +32,7 @@ from math import ceil
 from operator import itemgetter
 from pathlib import Path
 import re
-from typing import Any, Callable, List, Optional, Dict, Union, TypeVar
+from typing import Any, Callable, List, Optional, Dict, Tuple, Union, TypeVar
 from types import ModuleType
 
 
@@ -1205,6 +1205,7 @@ class FlowsheetReport:
         self,
         flowsheet_export: FlowsheetExport,
         total_type: _ChartTypes = None,
+        bgcolor: str = "#ffffff",
         **kwargs,
     ):
         """Constructor.
@@ -1212,6 +1213,7 @@ class FlowsheetReport:
         Args:
             flowsheet_export (FlowsheetExport): Exported flowsheet
             total_type (_ChartTypes, optional): How to represent 'total' information. Defaults to WAFFLE.
+            bgcolor: Plot and overall ('paper') background color, as a valid color string
             kwargs: Additional key/value pairs passed to the various `create_*` methods
         """
         self._kpis = flowsheet_export.kpis
@@ -1224,10 +1226,10 @@ class FlowsheetReport:
         self._init_options = kwargs
         if total_type:
             self._init_options["total_type"] = total_type
+        self._bgcolor = bgcolor
 
     def html(self, layout=None, **kwargs) -> str:
-        """Return the report as an HTML element.
-        The resulting HTML will be wrapped in a <div> with class 'report'.
+        """Build the report and return as a complete <HTML> element.
 
         Args:
             layout: Layout specification. See :class:`Layout` for format. If not given, lay out in one column.
@@ -1235,6 +1237,25 @@ class FlowsheetReport:
 
         Returns:
             HTML for the report
+        """
+        body, css = self.build(layout=layout, **kwargs)
+        # return HTML
+        report_css = f"body {{background-color: '{self._bgcolor}';}}"
+        html_head = f"<head><style>{report_css}\n{css}</style></head>"
+        html_body = f"<body>{body}</body>"
+        return f"<html>{html_head}{html_body}</html>"
+
+    _repr_html_ = html  # display automatically in Jupyter Notebooks
+
+    def build(self, layout=None, **kwargs) -> Tuple[str, str]:
+        """Build the report.
+
+        Args:
+            layout: Layout specification. See :class:`Layout` for format. If not given, lay out in one column.
+            kwargs: Options for the `create_*` methods.
+
+        Returns:
+            A pair of two strings: html body, CSS styles
         """
         # combine options from user settings, constructor, and this method
         options = {}
@@ -1255,10 +1276,7 @@ class FlowsheetReport:
         _log.debug(f"layout spec={spec}")
         # perform the layout
         layout_obj = Layout(spec, kpi_map)
-        # return HTML
-        return layout_obj.html
-
-    _repr_html_ = html  # display automatically in Jupyter Notebooks
+        return layout_obj.body, layout_obj.css
 
     @staticmethod
     def _preprocess_total_type(v):
@@ -1474,10 +1492,6 @@ class Layout:
         """
         self._kpis = kpis
         self._divs = self._to_divs(spec, self.FLOW_COL)
-
-    @property
-    def html(self):
-        return f"<html><head><style>{self.css}</style><body>{self.body}</body></html>"
 
     @property
     def body(self):
