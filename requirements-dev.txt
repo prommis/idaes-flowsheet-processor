@@ -9,6 +9,7 @@ sphinx-rtd-theme==2.0.0
 plotly >= 6.1.1
 pandas >= 2.2.3
 numpy >= 2
+IPython
 
 watertap @ git+https://github.com/watertap-org/watertap@main
 
