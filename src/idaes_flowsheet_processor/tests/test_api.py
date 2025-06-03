@@ -23,6 +23,7 @@ from pyomo.environ import SolverStatus, TerminationCondition
 
 import idaes_flowsheet_processor.api as fsapi
 
+
 pytest.importorskip(
     "watertap.flowsheets",
     reason="watertap.flowsheets is currently required to be able to run tests",
@@ -485,8 +486,8 @@ def test_add_option(tmpdir):
         )
 
 
-@pytest.mark.unit
-def test_flowsheet_export_kpi():
+@pytest.fixture
+def kpi_export():
     exp = fsapi.FlowsheetExport()
     # create
     single = "single"
@@ -506,12 +507,19 @@ def test_flowsheet_export_kpi():
     total = "total"
     exp.add_kpi_total(
         total,
-        values=[1.2, -1.2],
+        values=[1.2, 1.3],
         labels=["tlabel1", "tlabel2"],
         title="total title",
         units="totalUnits",
         total_label="total label",
     )
+    yield exp
+
+
+@pytest.mark.unit
+def test_flowsheet_export_kpi(kpi_export):
+    single, vector, total = "single", "vector", "total"
+    exp = kpi_export
     # validate
     kpis = exp.model_dump()["kpis"]
     expect = {
@@ -547,11 +555,11 @@ def test_flowsheet_export_kpi():
             "name": "total",
             "title": "total title",
             "units": "totalUnits",
-            "values": [1.2, -1.2],
+            "values": [1.2, 1.3],
             "labels": ["tlabel1", "tlabel2"],
             "xlab": "",
             "ylab": "",
-            "total": 0.0,
+            "total": 2.5,
             "total_label": "total label",
         },
     }
@@ -559,3 +567,208 @@ def test_flowsheet_export_kpi():
         got = kpis[name]
         for k in got:
             assert got[k] == expect[name][k]
+
+
+@pytest.mark.unit
+def test_flowsheet_report(kpi_export):
+    exp = kpi_export
+
+
+def test_layout_single_column():
+    # Single column layout
+    kpis = {"kpi1": "<div>kpi1</div>", "kpi2": "<div>kpi2</div>"}
+    spec = ["kpi1", "kpi2"]
+    layout = fsapi.Layout(spec, kpis)
+    body = layout.body
+    css = layout.css
+    assert "kpi1" in body and "kpi2" in body
+    assert ".grid_column" in css
+    assert ".grid_row" in css
+
+
+def test_layout_single_row():
+    # Single row layout
+    kpis = {"kpi1": "<div>kpi1</div>", "kpi2": "<div>kpi2</div>"}
+    spec = [["kpi1", "kpi2"]]
+    layout = fsapi.Layout(spec, kpis)
+    body = layout.body
+    assert "kpi1" in body and "kpi2" in body
+    # Should have both row and column divs
+    assert body.count("grid_row") > 0
+    assert body.count("grid_column") > 0
+
+
+def test_layout_grid():
+    # 2x2 grid
+    kpis = {
+        "kpi1": "<div>kpi1</div>",
+        "kpi2": "<div>kpi2</div>",
+        "kpi3": "<div>kpi3</div>",
+        "kpi4": "<div>kpi4</div>",
+    }
+    spec = [["kpi1", "kpi2"], ["kpi3", "kpi4"]]
+    layout = fsapi.Layout(spec, kpis)
+    body = layout.body
+    assert all(k in body for k in kpis)
+    # Should have two row divs
+    assert body.count("grid_row") >= 2
+
+
+def test_layout_nested():
+    # Nested layout
+    kpis = {"a": "<div>a</div>", "b": "<div>b</div>", "c": "<div>c</div>"}
+    spec = [["a", ["b", "c"]]]
+    layout = fsapi.Layout(spec, kpis)
+    body = layout.body
+    assert "a" in body and "b" in body and "c" in body
+    # Should have nested divs
+    assert body.count("grid_row") > 0
+    assert body.count("grid_column") > 0
+
+
+def test_layout_css():
+    kpis = {"kpi": "<div>kpi</div>"}
+    spec = ["kpi"]
+    layout = fsapi.Layout(spec, kpis)
+    css = layout.css
+    assert ".grid_row" in css
+    assert ".grid_column" in css
+
+
+def test_flowsheetinterface_get_diagram_returns_none():
+    fsi = flowsheet_interface()
+    fsi.build()
+    # No get_diagram function provided, should return None
+    assert fsi.get_diagram() is None
+
+
+def test_flowsheetinterface_dict_and_load():
+    fsi = flowsheet_interface()
+    fsi.build()
+    d = fsi.dict()
+    # Should contain 'exports' and 'version'
+    assert "exports" in d and "version" in d
+    # Should be able to load the same dict
+    fsi.load(d)
+
+
+def test_flowsheetinterface_select_option():
+    fsi = flowsheet_interface()
+    fsi.build()
+    # Add an option
+    fsi.fs_exp.add_option(name="opt1", values_allowed=["a", "b"], value="a")
+    fsi.select_option("opt1", "b")
+    assert fsi.fs_exp.build_options["opt1"].value == "b"
+
+
+def test_flowsheetinterface_export_values():
+    fsi = flowsheet_interface()
+    fsi.build()
+    # Should not raise
+    fsi.export_values()
+
+
+def test_flowsheetinterface_from_installed_packages_and_from_module():
+    # These are mostly smoke tests, as they depend on environment
+    result = fsapi.FlowsheetInterface.from_installed_packages()
+    assert isinstance(result, dict)
+    # from_module with a string (should not raise, may return None)
+    mod = "watertap.flowsheets.seawater_RO_desalination"
+    try:
+        iface = fsapi.FlowsheetInterface.from_module(mod)
+    except Exception:
+        iface = None
+    # iface may be None if the module doesn't have the UI_HOOK
+    assert iface is None or hasattr(iface, "build")
+
+
+def test_flowsheetinterface_report():
+    fsi = flowsheet_interface()
+    fsi.build()
+    report = fsi.report()
+    assert hasattr(report, "html")
+
+
+def test_flowsheetreport_html_and_build(kpi_export):
+    from idaes_flowsheet_processor.api import FlowsheetReport
+
+    report = FlowsheetReport(kpi_export)
+    html = report.html()
+    assert html.startswith("<html>")
+    body, css = report.build()
+    assert isinstance(body, str)
+    assert isinstance(css, str)
+    assert any(k in body for k in kpi_export.kpis)
+    assert ".grid_row" in css
+    assert ".grid_column" in css
+
+
+def test_flowsheetreport_kpi_html_and_barchart(kpi_export):
+    from idaes_flowsheet_processor.api import FlowsheetReport
+
+    report = FlowsheetReport(kpi_export)
+    # Test _kpi_html for each KPI
+    for kpi in kpi_export.kpis.values():
+        html = report._kpi_html(kpi)
+        assert isinstance(html, str)
+    # Test create_barchart for a vector KPI
+    for kpi in kpi_export.kpis.values():
+        if kpi.is_vector and not kpi.has_total:
+            chart_html = report.create_barchart(kpi)
+            assert isinstance(chart_html, str)
+
+
+def test_flowsheetreport_create_total_chart(kpi_export):
+    from idaes_flowsheet_processor.api import FlowsheetReport, WAFFLE, DONUT
+
+    # add some where total is zero
+    kpi_export.add_kpi_total(
+        "zero1",
+        values=[1.2, -1.2],  # total = 0
+        labels=["tlabel1", "tlabel2"],
+        title="total title",
+        units="totalUnits",
+        total_label="total label",
+    )
+    kpi_export.add_kpi_total(
+        "zero2",
+        values=[0, 0, 0],  # total = 0
+        labels=["tlabel1", "tlabel2"],
+        title="total title",
+        units="totalUnits",
+        total_label="total label",
+    )
+    yield exp
+    # Test create_total for a KPI with has_total
+    for kpi in kpi_export.kpis.values():
+        if kpi.is_vector and kpi.has_total:
+            if kpi.name.startswith("zero"):
+                with pytest.raises(ValueError):
+                    FlowsheetReport.create_total(kpi)
+            else:
+                # Test both WAFFLE and DONUT chart types
+                html_waffle = FlowsheetReport.create_total(kpi, total_type=WAFFLE)
+                html_donut = FlowsheetReport.create_total(kpi, total_type=DONUT)
+                assert isinstance(html_waffle, str)
+                assert isinstance(html_donut, str)
+
+
+def test_flowsheetreport_create_value(kpi_export):
+    from idaes_flowsheet_processor.api import FlowsheetReport
+
+    for kpi in kpi_export.kpis.values():
+        html = FlowsheetReport.create_value(kpi)
+        assert isinstance(html, str)
+
+
+def test_flowsheetreport_preprocess_total_type():
+    from idaes_flowsheet_processor.api import FlowsheetReport, WAFFLE, DONUT
+
+    # Accepts enum and string
+    assert FlowsheetReport._preprocess_total_type(WAFFLE) == WAFFLE
+    assert FlowsheetReport._preprocess_total_type("waffle") == WAFFLE
+    assert FlowsheetReport._preprocess_total_type("donut") == DONUT
+    import pytest
+
+    with pytest.raises(ValueError):
+        FlowsheetReport._preprocess_total_type("notatype")

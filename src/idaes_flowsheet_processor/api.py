@@ -77,7 +77,7 @@ _SupportedObjType = Union[
 "Used for type hints and as a shorthand in error messages (i.e. not for runtime checks)"
 
 
-def ensure_supported(obj):
+def ensure_supported(obj: object) -> None:
     """Raise UnsupportedObjType if object type is not supported as an input/output"""
     supported = True
     try:
@@ -127,7 +127,7 @@ class ModelExport(BaseModel):
 
     @field_validator("obj")
     @classmethod
-    def validate_obj(cls, v):
+    def validate_obj(cls, v: object) -> object:
         if v is not None:
             ensure_supported(v)
         return v
@@ -135,7 +135,7 @@ class ModelExport(BaseModel):
     # Get value from object
     @field_validator("value")
     @classmethod
-    def validate_value(cls, v, info: ValidationInfo):
+    def validate_value(cls, v: float, info: ValidationInfo) -> float:
         if info.data.get("obj", None) is None:
             return v
         obj = info.data["obj"]
@@ -145,7 +145,7 @@ class ModelExport(BaseModel):
     # Derive display_units from ui_units
     @field_validator("display_units")
     @classmethod
-    def validate_units(cls, v, info: ValidationInfo):
+    def validate_units(cls, v: str, info: ValidationInfo) -> str:
         if not v:
             u = info.data.get("ui_units", pyo.units.dimensionless)
             v = str(pyo.units.get_units(u))
@@ -154,7 +154,7 @@ class ModelExport(BaseModel):
     # set name dynamically from object
     @field_validator("name")
     @classmethod
-    def validate_name(cls, v, info: ValidationInfo):
+    def validate_name(cls, v: str, info: ValidationInfo) -> str:
         if not v:
             obj = info.data
             # if initializing from a dict, skip this
@@ -165,7 +165,7 @@ class ModelExport(BaseModel):
 
     @field_validator("is_readonly")
     @classmethod
-    def set_readonly_default(cls, v, info: ValidationInfo):
+    def set_readonly_default(cls, v: Optional[bool], info: ValidationInfo) -> bool:
         if v is None:
             v = True
             obj = info.data["obj"]
@@ -178,7 +178,7 @@ class ModelExport(BaseModel):
 
     @field_validator("obj_key")
     @classmethod
-    def set_obj_key_default(cls, v, info: ValidationInfo):
+    def set_obj_key_default(cls, v: Optional[str], info: ValidationInfo) -> str:
         if v is None:
             obj = info.data["obj"]
             ensure_supported(obj)
@@ -217,21 +217,21 @@ class ModelOption(BaseModel):
 
     @field_validator("display_name")
     @classmethod
-    def validate_display_name(cls, v, info: ValidationInfo):
+    def validate_display_name(cls, v: Optional[str], info: ValidationInfo) -> str:
         if v is None:
             v = info.data.get("name")
         return v
 
     @field_validator("description")
     @classmethod
-    def validate_description(cls, v, info: ValidationInfo):
+    def validate_description(cls, v: Optional[str], info: ValidationInfo) -> str:
         if v is None:
             v = info.data.get("display_name")
         return v
 
     @field_validator("value")
     @classmethod
-    def validate_value(cls, v, info: ValidationInfo):
+    def validate_value(cls, v: Any, info: ValidationInfo) -> Any:
         allowed = info.data.get("values_allowed", None)
         # check if values allowed is int or float and ensure valid value
         if allowed == "int":
@@ -296,7 +296,7 @@ class FlowsheetExport(BaseModel):
     # set name dynamically from object
     @field_validator("name")
     @classmethod
-    def validate_name(cls, v, info: ValidationInfo):
+    def validate_name(cls, v: str, info: ValidationInfo) -> str:
         if not v:
             try:
                 v = info.data["obj"].name
@@ -308,7 +308,7 @@ class FlowsheetExport(BaseModel):
 
     @field_validator("description")
     @classmethod
-    def validate_description(cls, v, info: ValidationInfo):
+    def validate_description(cls, v: str, info: ValidationInfo) -> str:
         if not v:
             try:
                 v = info.data["obj"].doc
@@ -316,7 +316,9 @@ class FlowsheetExport(BaseModel):
                 v = f"{info.data['name']} flowsheet"
         return v
 
-    def add(self, *args, data: Union[dict, ModelExport] = None, **kwargs) -> object:
+    def add(
+        self, *args: object, data: Union[dict, "ModelExport"] = None, **kwargs: object
+    ) -> object:
         """Add a new variable (or other model object).
 
         There are a few different ways of invoking this function. Users will
@@ -377,7 +379,7 @@ class FlowsheetExport(BaseModel):
 
     def add_kpi_value(
         self, name: str, value: float, label: str = "", title: str = "", units: str = ""
-    ):
+    ) -> None:
         """Add a Key Performance Indicator (KPI) with a single value.
 
         Args:
@@ -409,10 +411,10 @@ class FlowsheetExport(BaseModel):
         values: List[float],
         labels: List[str],
         title: str,
-        xlab: str = None,
-        ylab: str = None,
+        xlab: Optional[str] = None,
+        ylab: Optional[str] = None,
         units: str = "",
-    ):
+    ) -> None:
         """Add a Key Performance Indicator (KPI) with multiple values
 
         Args:
@@ -445,7 +447,7 @@ class FlowsheetExport(BaseModel):
         title: str,
         total_label: str,
         units: str = "%",
-    ):
+    ) -> None:
         """Add a Key Performance Indicator (KPI) vector with multiple values and a total
 
         Args:
@@ -470,10 +472,10 @@ class FlowsheetExport(BaseModel):
         self.kpis[name] = kpi
         self.kpi_order.append(name)
 
-    def set_kpi_default_options(self, **options):
+    def set_kpi_default_options(self, **options: object) -> None:
         self.kpi_options = options
 
-    def from_csv(self, file: Union[str, Path], flowsheet):
+    def from_csv(self, file: Union[str, Path], flowsheet: object) -> int:
         """Load multiple exports from the given CSV file.
 
         CSV file format rules:
@@ -636,18 +638,18 @@ class FlowsheetExport(BaseModel):
         return num
 
     @staticmethod
-    def _massage_object_name(s):
+    def _massage_object_name(s: str) -> str:
         s1 = re.sub(r"\[([^]]*)\]", r"['\1']", s)  # quote everything in [brackets]
         s2 = re.sub(r"\['([0-9.]+)'\]", r"[\1]", s1)  # unquote [0.0] numbers
         return s2
 
     @staticmethod
-    def _massage_ui_units(s):
+    def _massage_ui_units(s: str) -> str:
         if s == "dimensionless":
             return ""
         return s
 
-    def add_option(self, name: str, **kwargs) -> ModelOption:
+    def add_option(self, name: str, **kwargs: object) -> ModelOption:
         """Add an 'option' to the flowsheet that can be displayed and manipulated
         from the UI.
 
@@ -715,16 +717,16 @@ class FlowsheetInterface:
 
     def __init__(
         self,
-        fs: FlowsheetExport = None,
-        do_build: Callable = None,
-        do_export: Callable = None,
-        do_solve: Callable = None,
-        do_initialize: Callable = None,
-        get_diagram: Callable = None,
-        category: FlowsheetCategory = None,
-        custom_do_param_sweep_kwargs: Dict = None,
-        **kwargs,
-    ):
+        fs: Optional[FlowsheetExport] = None,
+        do_build: Optional[Callable] = None,
+        do_export: Optional[Callable] = None,
+        do_solve: Optional[Callable] = None,
+        do_initialize: Optional[Callable] = None,
+        get_diagram: Optional[Callable] = None,
+        category: Optional["FlowsheetCategory"] = None,
+        custom_do_param_sweep_kwargs: Optional[Dict] = None,
+        **kwargs: object,
+    ) -> None:
         """Constructor.
 
         Args:
@@ -769,7 +771,7 @@ class FlowsheetInterface:
 
         self._actions["custom_do_param_sweep_kwargs"] = custom_do_param_sweep_kwargs
 
-    def build(self, **kwargs):
+    def build(self, **kwargs: object) -> None:
         """Build flowsheet
 
         Args:
@@ -787,7 +789,7 @@ class FlowsheetInterface:
             raise RuntimeError(f"Building flowsheet: {err}") from err
         return
 
-    def solve(self, **kwargs):
+    def solve(self, **kwargs: object) -> Any:
         """Solve flowsheet.
 
         Args:
@@ -805,7 +807,7 @@ class FlowsheetInterface:
             raise RuntimeError(f"Solving flowsheet: {err}") from err
         return result
 
-    def get_diagram(self, **kwargs):
+    def get_diagram(self, **kwargs: object) -> Optional[Any]:
         """Return diagram image name.
 
         Args:
@@ -819,7 +821,7 @@ class FlowsheetInterface:
         else:
             return None
 
-    def initialize(self, *args, **kwargs):
+    def initialize(self, *args: object, **kwargs: object) -> Any:
         """Run initialize function.
 
         Args:
@@ -845,7 +847,7 @@ class FlowsheetInterface:
         """
         return self.fs_exp.model_dump(exclude={"obj"})
 
-    def load(self, data: Dict):
+    def load(self, data: Dict) -> None:
         """Load values from the data into corresponding variables in this
         instance's FlowsheetObject.
 
@@ -929,7 +931,7 @@ class FlowsheetInterface:
         if missing:
             raise self.MissingObjectError(missing)
 
-    def select_option(self, option_name: str, new_option: str):
+    def select_option(self, option_name: str, new_option: str) -> None:
         """Update flowsheet with selected option.
 
         Args:
@@ -949,7 +951,7 @@ class FlowsheetInterface:
         # # add functino name as new build function
         # self.add_action("build", func_name)
 
-    def add_action(self, action_name: str, action_func: Callable):
+    def add_action(self, action_name: str, action_func: Callable) -> None:
         """Add an action for the flowsheet.
 
         Args:
@@ -1015,7 +1017,7 @@ class FlowsheetInterface:
 
         self._actions[action_name] = action_wrapper
 
-    def get_action(self, name: str) -> Union[Callable, None]:
+    def get_action(self, name: str) -> Optional[Callable]:
         """Get the function for an ``add()``-ed action.
 
         Args:
@@ -1029,7 +1031,7 @@ class FlowsheetInterface:
         """
         return self._actions[name]
 
-    def run_action(self, name, *args, **kwargs):
+    def run_action(self, name: str, *args: object, **kwargs: object) -> Any:
         """Run the named action."""
         func = self.get_action(name)
         if name.startswith("_"):
@@ -1039,7 +1041,7 @@ class FlowsheetInterface:
             )
         return func(*args, **kwargs)
 
-    def export_values(self):
+    def export_values(self) -> None:
         """Copy current values in underlying Pyomo model into exported model.
 
         Side-effects:
@@ -1165,7 +1167,7 @@ class FlowsheetInterface:
         # Return created FlowsheetInterface
         return interface
 
-    def report(self, **kwargs) -> "FlowsheetReport":
+    def report(self, **kwargs: object) -> "FlowsheetReport":
         """Create HTML flowsheet report.
 
         Args:
@@ -1206,10 +1208,10 @@ class FlowsheetReport:
     def __init__(
         self,
         flowsheet_export: FlowsheetExport,
-        total_type: _ChartTypes = None,
+        total_type: Optional[_ChartTypes] = None,
         bgcolor: str = "#ffffff",
-        **kwargs,
-    ):
+        **kwargs: object,
+    ) -> None:
         """Constructor.
 
         Args:
@@ -1230,7 +1232,7 @@ class FlowsheetReport:
             self._init_options["total_type"] = total_type
         self._bgcolor = bgcolor
 
-    def html(self, layout=None, **kwargs) -> str:
+    def html(self, layout: Optional[Any] = None, **kwargs: object) -> str:
         """Build the report and return as a complete <HTML> element.
 
         Args:
@@ -1249,7 +1251,7 @@ class FlowsheetReport:
 
     _repr_html_ = html  # display automatically in Jupyter Notebooks
 
-    def build(self, layout=None, **kwargs) -> Tuple[str, str]:
+    def build(self, layout: Optional[Any] = None, **kwargs: object) -> Tuple[str, str]:
         """Build the report.
 
         Args:
@@ -1281,7 +1283,7 @@ class FlowsheetReport:
         return layout_obj.body, layout_obj.css
 
     @staticmethod
-    def _preprocess_total_type(v):
+    def _preprocess_total_type(v: object) -> _ChartTypes:
         if isinstance(v, _ChartTypes):
             pass  # do nothing
         elif isinstance(v, str):
@@ -1297,7 +1299,7 @@ class FlowsheetReport:
         return v
 
     @classmethod
-    def _kpi_html(cls, kpi, **options):
+    def _kpi_html(cls, kpi: KPI, **options: object) -> str:
         """Get HTML for one KPI.
 
         Args:
@@ -1314,7 +1316,7 @@ class FlowsheetReport:
         return item
 
     @classmethod
-    def create_barchart(cls, kpi: KPI, **ignore) -> str:
+    def create_barchart(cls, kpi: KPI, **ignore: object) -> str:
         """Create a barchart from a vector of values
 
         Args:
@@ -1335,7 +1337,9 @@ class FlowsheetReport:
         return fig.to_html()
 
     @classmethod
-    def create_total(cls, kpi: KPI, total_type: _ChartTypes = WAFFLE, **ignore) -> str:
+    def create_total(
+        cls, kpi: KPI, total_type: _ChartTypes = WAFFLE, **ignore: object
+    ) -> str:
         """Create diagram for a vector that should be represented as parts of a total.
         This will be either a pie (donut) chart or waffle chart.
 
@@ -1352,8 +1356,13 @@ class FlowsheetReport:
         return fig.to_html()
 
     @classmethod
-    def _waffle_chart(cls, kpi):
+    def _waffle_chart(cls, kpi: KPI) -> Any:
         """Create a waffle chart using the imshow() plot."""
+        if kpi.total == 0:
+            raise ValueError(
+                f"KPI '{kpi.title}' has total of 0, cannot create waffle chart"
+            )
+        # import here to avoid circular import
         # sort (value, label) pairs by value
         val_lab = list(zip(kpi.values, kpi.labels))
         val_lab.sort(key=itemgetter(0))
@@ -1431,7 +1440,9 @@ class FlowsheetReport:
         return fig
 
     @classmethod
-    def create_value(cls, kpi: KPI, fmtspec: str = ".6f", stack=True, **ignore) -> str:
+    def create_value(
+        cls, kpi: KPI, fmtspec: str = ".6f", stack: bool = True, **ignore: object
+    ) -> str:
         """Create 'diagram' for a single value.
 
         Args:
