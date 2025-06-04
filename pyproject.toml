@@ -12,6 +12,9 @@ dynamic = ["version"]
 dependencies = [
     "pydantic >= 2, <3",
     "pyomo",
+    "plotly >= 6.1.1",
+    "pandas >= 2.2.3",
+    "numpy >= 2"
 ]
 [project.optional-dependencies]
 testing = [

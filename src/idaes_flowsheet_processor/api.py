@@ -28,10 +28,13 @@ except ImportError:
     from importlib_resources import files
 import inspect
 import logging
+from math import ceil
+from operator import itemgetter
 from pathlib import Path
 import re
-from typing import Any, Callable, List, Optional, Dict, Union, TypeVar
+from typing import Any, Callable, List, Optional, Dict, Tuple, Union, TypeVar
 from types import ModuleType
+
 
 try:
     from importlib import metadata
@@ -42,6 +45,11 @@ except ImportError:
 from pyomo.contrib.viewer.report import degrees_of_freedom
 from pydantic import BaseModel, Field, field_validator, ValidationInfo, ConfigDict
 import pyomo.environ as pyo
+import plotly.express as px
+import plotly.graph_objects as go
+import numpy as np
+import pandas as pd
+from IPython.core.display import HTML
 
 #: Forward-reference to a FlowsheetInterface type, used in
 #: :meth:`FlowsheetInterface.find`
@@ -52,11 +60,7 @@ _log = logging.getLogger(__name__)
 
 
 class UnsupportedObjType(TypeError):
-    def __init__(
-        self,
-        obj: Any,
-        supported: Optional = None,
-    ):
+    def __init__(self, obj: Any, supported=None):
         msg = f"Object '{obj}' of type '{type(obj)}' is not supported."
         if supported is not None:
             msg += f"\nSupported: {supported}"
@@ -65,15 +69,32 @@ class UnsupportedObjType(TypeError):
         self.supported = supported
 
 
+_SupportedObjType = Union[
+    pyo.Var,
+    pyo.Expression,
+    pyo.Param,
+]
+"Used for type hints and as a shorthand in error messages (i.e. not for runtime checks)"
+
+
+def ensure_supported(obj: object) -> None:
+    """Raise UnsupportedObjType if object type is not supported as an input/output"""
+    supported = True
+    try:
+        if not (
+            obj.is_variable_type()
+            or obj.is_expression_type()
+            or obj.is_parameter_type()
+        ):
+            supported = False
+    except AttributeError:
+        supported = False
+    if not supported:
+        raise UnsupportedObjType(obj, supported=_SupportedObjType)
+
+
 class ModelExport(BaseModel):
     """A variable, expression, or parameter."""
-
-    _SupportedObjType = Union[
-        pyo.Var,
-        pyo.Expression,
-        pyo.Param,
-    ]
-    "Used for type hints and as a shorthand in error messages (i.e. not for runtime checks)"
 
     # TODO: if Optional[_SupportedObjType] is used for the `obj` type hint,
     # pydantic will run the runtime instance check which is not what we want
@@ -106,54 +127,25 @@ class ModelExport(BaseModel):
 
     @field_validator("obj")
     @classmethod
-    def ensure_obj_is_supported(cls, v):
+    def validate_obj(cls, v: object) -> object:
         if v is not None:
-            cls._ensure_supported_type(v)
+            ensure_supported(v)
         return v
-
-    @classmethod
-    def _ensure_supported_type(cls, obj: object):
-        is_valid = (
-            obj.is_variable_type()
-            or obj.is_expression_type()
-            or obj.is_parameter_type()
-            # TODO: add support for numbers with pyo.numvalue.is_numeric_data()
-        )
-        if is_valid:
-            return True
-        raise UnsupportedObjType(obj, supported=cls._SupportedObjType)
-
-    @classmethod
-    def _get_supported_obj(
-        cls, values: dict, field_name: str = "obj", allow_none: bool = False
-    ):
-        obj = values.get(field_name, None)
-        if not allow_none and obj is None:
-            raise TypeError(f"'{field_name}' is None but allow_none is False")
-        cls._ensure_supported_type(obj)
-        return obj
-
-    # NOTE: IMPORTANT: all validators used to set a dynamic default value
-    # should have the `always=True` option, or the validator won't be called
-    # when the value for that field is not passed
-    # (which is precisely when we need the default value)
-    # additionally, `pre=True` should be given if the field can at any point
-    # have a value that doesn't match its type annotation
-    # (e.g. `None` for a strict (non-`Optional` `bool` field)
 
     # Get value from object
     @field_validator("value")
     @classmethod
-    def validate_value(cls, v, info: ValidationInfo):
+    def validate_value(cls, v: float, info: ValidationInfo) -> float:
         if info.data.get("obj", None) is None:
             return v
-        obj = cls._get_supported_obj(info.data, allow_none=False)
+        obj = info.data["obj"]
+        ensure_supported(obj)
         return pyo.value(obj)
 
     # Derive display_units from ui_units
     @field_validator("display_units")
     @classmethod
-    def validate_units(cls, v, info: ValidationInfo):
+    def validate_units(cls, v: str, info: ValidationInfo) -> str:
         if not v:
             u = info.data.get("ui_units", pyo.units.dimensionless)
             v = str(pyo.units.get_units(u))
@@ -162,21 +154,22 @@ class ModelExport(BaseModel):
     # set name dynamically from object
     @field_validator("name")
     @classmethod
-    def validate_name(cls, v, info: ValidationInfo):
+    def validate_name(cls, v: str, info: ValidationInfo) -> str:
         if not v:
-            obj = cls._get_supported_obj(info.data, allow_none=False)
-            try:
-                v = obj.name
-            except AttributeError:
-                pass
+            obj = info.data
+            # if initializing from a dict, skip this
+            if not isinstance(obj, dict):
+                ensure_supported(obj)
+                v = getattr(obj, "name", "unknown")
         return v
 
     @field_validator("is_readonly")
     @classmethod
-    def set_readonly_default(cls, v, info: ValidationInfo):
+    def set_readonly_default(cls, v: Optional[bool], info: ValidationInfo) -> bool:
         if v is None:
             v = True
-            obj = cls._get_supported_obj(info.data, allow_none=False)
+            obj = info.data["obj"]
+            ensure_supported(obj)
             if obj.is_variable_type() or (
                 obj.is_parameter_type() and obj.parent_component().mutable
             ):
@@ -185,11 +178,28 @@ class ModelExport(BaseModel):
 
     @field_validator("obj_key")
     @classmethod
-    def set_obj_key_default(cls, v, info: ValidationInfo):
+    def set_obj_key_default(cls, v: Optional[str], info: ValidationInfo) -> str:
         if v is None:
-            obj = cls._get_supported_obj(info.data, allow_none=False)
+            obj = info.data["obj"]
+            ensure_supported(obj)
             v = str(obj)
         return v
+
+
+class KPI(BaseModel):
+    """Key Performance Indicator"""
+
+    is_vector: bool
+    has_total: bool
+    name: str
+    title: str
+    units: str = "none"
+    values: List[float] = []
+    labels: List[str] = []
+    xlab: str = ""
+    ylab: str = ""
+    total: float = 0.0
+    total_label: str = ""
 
 
 class ModelOption(BaseModel):
@@ -207,21 +217,21 @@ class ModelOption(BaseModel):
 
     @field_validator("display_name")
     @classmethod
-    def validate_display_name(cls, v, info: ValidationInfo):
+    def validate_display_name(cls, v: Optional[str], info: ValidationInfo) -> str:
         if v is None:
             v = info.data.get("name")
         return v
 
     @field_validator("description")
     @classmethod
-    def validate_description(cls, v, info: ValidationInfo):
+    def validate_description(cls, v: Optional[str], info: ValidationInfo) -> str:
         if v is None:
             v = info.data.get("display_name")
         return v
 
     @field_validator("value")
     @classmethod
-    def validate_value(cls, v, info: ValidationInfo):
+    def validate_value(cls, v: Any, info: ValidationInfo) -> Any:
         allowed = info.data.get("values_allowed", None)
         # check if values allowed is int or float and ensure valid value
         if allowed == "int":
@@ -274,6 +284,9 @@ class FlowsheetExport(BaseModel):
     name: Union[None, str] = Field(default="", validate_default=True)
     description: Union[None, str] = Field(default="", validate_default=True)
     exports: Dict[str, ModelExport] = {}
+    kpis: Dict[str, KPI] = {}
+    kpi_order: list[str] = []
+    kpi_options: Dict = {}
     version: int = 2
     requires_idaes_solver: bool = False
     dof: int = 0
@@ -283,7 +296,7 @@ class FlowsheetExport(BaseModel):
     # set name dynamically from object
     @field_validator("name")
     @classmethod
-    def validate_name(cls, v, info: ValidationInfo):
+    def validate_name(cls, v: str, info: ValidationInfo) -> str:
         if not v:
             try:
                 v = info.data["obj"].name
@@ -295,7 +308,7 @@ class FlowsheetExport(BaseModel):
 
     @field_validator("description")
     @classmethod
-    def validate_description(cls, v, info: ValidationInfo):
+    def validate_description(cls, v: str, info: ValidationInfo) -> str:
         if not v:
             try:
                 v = info.data["obj"].doc
@@ -303,7 +316,9 @@ class FlowsheetExport(BaseModel):
                 v = f"{info.data['name']} flowsheet"
         return v
 
-    def add(self, *args, data: Union[dict, ModelExport] = None, **kwargs) -> object:
+    def add(
+        self, *args: object, data: Union[dict, "ModelExport"] = None, **kwargs: object
+    ) -> object:
         """Add a new variable (or other model object).
 
         There are a few different ways of invoking this function. Users will
@@ -362,7 +377,105 @@ class FlowsheetExport(BaseModel):
         self.exports[key] = model_export
         return model_export
 
-    def from_csv(self, file: Union[str, Path], flowsheet):
+    def add_kpi_value(
+        self, name: str, value: float, label: str = "", title: str = "", units: str = ""
+    ) -> None:
+        """Add a Key Performance Indicator (KPI) with a single value.
+
+        Args:
+            name (str): Name of the KPI
+            value (float): Numeric value
+            label (str): Label for the numeric value
+            title: Overall description
+            units (str, optional): Units for the value. Defaults to "".
+        """
+        if not title:
+            title = label
+        elif not label:
+            label = title
+        kpi = KPI(
+            is_vector=False,
+            has_total=False,
+            name=name,
+            title=title,
+            values=[value],
+            labels=[label],
+            units=units,
+        )
+        self.kpis[name] = kpi
+        self.kpi_order.append(name)
+
+    def add_kpi_vector(
+        self,
+        name: str,
+        values: List[float],
+        labels: List[str],
+        title: str,
+        xlab: Optional[str] = None,
+        ylab: Optional[str] = None,
+        units: str = "",
+    ) -> None:
+        """Add a Key Performance Indicator (KPI) with multiple values
+
+        Args:
+            name (str): Name of the KPI
+            values (List[float]): Numeric values
+            labels (List[str]): Labels corresponding to values
+            title: Overall description
+            values_description (str, optional): Overall label for the values (e.g., "Compounds")
+            units (str, optional): Descriptive units for the values
+        """
+        kpi = KPI(
+            is_vector=True,
+            has_total=False,
+            name=name,
+            title=title,
+            units=units,
+            values=values,
+            labels=labels,
+            xlab=xlab,
+            ylab=ylab,
+        )
+        self.kpis[name] = kpi
+        self.kpi_order.append(name)
+
+    def add_kpi_total(
+        self,
+        name: str,
+        values: List[float],
+        labels: List[str],
+        title: str,
+        total_label: str,
+        units: str = "%",
+    ) -> None:
+        """Add a Key Performance Indicator (KPI) vector with multiple values and a total
+
+        Args:
+            name (str): Name of the KPI
+            values (List[float]): Numeric values
+            labels (List[str]): Labels corresponding to values
+            total_label: Label for the 'total' to which the values sum.
+            units (str, optional): Units for the values, e.g., "%" if they are percentages adding to 100
+        """
+        total = sum(values)
+        kpi = KPI(
+            is_vector=True,
+            has_total=True,
+            name=name,
+            title=title,
+            units=units,
+            values=values,
+            labels=labels,
+            total=total,
+            total_label=total_label,
+        )
+        self.kpis[name] = kpi
+        self.kpi_order.append(name)
+
+    def set_kpi_default_options(self, **options: object) -> None:
+        self.kpi_options = options
+
+    def from_csv(self, file: Union[str, Path], flowsheet: object) -> int:
         """Load multiple exports from the given CSV file.
 
         CSV file format rules:
@@ -525,18 +638,18 @@ class FlowsheetExport(BaseModel):
         return num
 
     @staticmethod
-    def _massage_object_name(s):
+    def _massage_object_name(s: str) -> str:
         s1 = re.sub(r"\[([^]]*)\]", r"['\1']", s)  # quote everything in [brackets]
         s2 = re.sub(r"\['([0-9.]+)'\]", r"[\1]", s1)  # unquote [0.0] numbers
         return s2
 
     @staticmethod
-    def _massage_ui_units(s):
+    def _massage_ui_units(s: str) -> str:
         if s == "dimensionless":
             return ""
         return s
 
-    def add_option(self, name: str, **kwargs) -> ModelOption:
+    def add_option(self, name: str, **kwargs: object) -> ModelOption:
         """Add an 'option' to the flowsheet that can be displayed and manipulated
         from the UI.
 
@@ -604,16 +717,16 @@ class FlowsheetInterface:
 
     def __init__(
         self,
-        fs: FlowsheetExport = None,
-        do_build: Callable = None,
-        do_export: Callable = None,
-        do_solve: Callable = None,
-        do_initialize: Callable = None,
-        get_diagram: Callable = None,
-        category: FlowsheetCategory = None,
-        custom_do_param_sweep_kwargs: Dict = None,
-        **kwargs,
-    ):
+        fs: Optional[FlowsheetExport] = None,
+        do_build: Optional[Callable] = None,
+        do_export: Optional[Callable] = None,
+        do_solve: Optional[Callable] = None,
+        do_initialize: Optional[Callable] = None,
+        get_diagram: Optional[Callable] = None,
+        category: Optional["FlowsheetCategory"] = None,
+        custom_do_param_sweep_kwargs: Optional[Dict] = None,
+        **kwargs: object,
+    ) -> None:
         """Constructor.
 
         Args:
@@ -658,7 +771,7 @@ class FlowsheetInterface:
 
         self._actions["custom_do_param_sweep_kwargs"] = custom_do_param_sweep_kwargs
 
-    def build(self, **kwargs):
+    def build(self, **kwargs: object) -> None:
         """Build flowsheet
 
         Args:
@@ -676,7 +789,7 @@ class FlowsheetInterface:
             raise RuntimeError(f"Building flowsheet: {err}") from err
         return
 
-    def solve(self, **kwargs):
+    def solve(self, **kwargs: object) -> Any:
         """Solve flowsheet.
 
         Args:
@@ -694,7 +807,7 @@ class FlowsheetInterface:
             raise RuntimeError(f"Solving flowsheet: {err}") from err
         return result
 
-    def get_diagram(self, **kwargs):
+    def get_diagram(self, **kwargs: object) -> Optional[Any]:
         """Return diagram image name.
 
         Args:
@@ -708,7 +821,7 @@ class FlowsheetInterface:
         else:
             return None
 
-    def initialize(self, *args, **kwargs):
+    def initialize(self, *args: object, **kwargs: object) -> Any:
         """Run initialize function.
 
         Args:
@@ -734,7 +847,7 @@ class FlowsheetInterface:
         """
         return self.fs_exp.model_dump(exclude={"obj"})
 
-    def load(self, data: Dict):
+    def load(self, data: Dict) -> None:
         """Load values from the data into corresponding variables in this
         instance's FlowsheetObject.
 
@@ -818,7 +931,7 @@ class FlowsheetInterface:
         if missing:
             raise self.MissingObjectError(missing)
 
-    def select_option(self, option_name: str, new_option: str):
+    def select_option(self, option_name: str, new_option: str) -> None:
         """Update flowsheet with selected option.
 
         Args:
@@ -838,7 +951,7 @@ class FlowsheetInterface:
         # # add functino name as new build function
         # self.add_action("build", func_name)
 
-    def add_action(self, action_name: str, action_func: Callable):
+    def add_action(self, action_name: str, action_func: Callable) -> None:
         """Add an action for the flowsheet.
 
         Args:
@@ -904,7 +1017,7 @@ class FlowsheetInterface:
 
         self._actions[action_name] = action_wrapper
 
-    def get_action(self, name: str) -> Union[Callable, None]:
+    def get_action(self, name: str) -> Optional[Callable]:
         """Get the function for an ``add()``-ed action.
 
         Args:
@@ -918,7 +1031,7 @@ class FlowsheetInterface:
         """
         return self._actions[name]
 
-    def run_action(self, name, *args, **kwargs):
+    def run_action(self, name: str, *args: object, **kwargs: object) -> Any:
         """Run the named action."""
         func = self.get_action(name)
         if name.startswith("_"):
@@ -928,7 +1041,7 @@ class FlowsheetInterface:
             )
         return func(*args, **kwargs)
 
-    def export_values(self):
+    def export_values(self) -> None:
         """Copy current values in underlying Pyomo model into exported model.
 
         Side-effects:
@@ -1053,3 +1166,369 @@ class FlowsheetInterface:
             return None
         # Return created FlowsheetInterface
         return interface
+
+    def report(self, **kwargs: object) -> "FlowsheetReport":
+        """Create HTML flowsheet report.
+
+        Args:
+            kwargs: Additional keywords passed to :class:`FlowsheetReport`
+
+        Raises:
+            ValueError: If the total_type argument is invalid
+
+        Returns:
+            FlowsheetReport: A flowsheet report, which will display automatically in Jupyter Notebooks.
+        """
+        return FlowsheetReport(self.fs_exp, **kwargs)
+
+
+class _ChartTypes(Enum):
+    waffle = 1
+    donut = 2
+
+
+WAFFLE = _ChartTypes.waffle
+DONUT = _ChartTypes.donut
+
+
+class FlowsheetReport:
+    """Report of the Key Performance Indicators (KPIs) for a flowsheet.
+
+    The specification of the report is extracted from the FlowsheetExport object
+    that is passed to the class constructor.
+    """
+
+    # Some settings for HTML display
+    VALUE_FONT_NAME_SIZE = "150%"
+    VALUE_FONT_VAL_SIZE = "180%"
+    VALUE_FONT_NAME_COLOR = "#666"
+    VALUE_FONT_VAL_COLOR = "#66F"
+    VALUE_SEP_WIDTH = "7px"
+
+    def __init__(
+        self,
+        flowsheet_export: FlowsheetExport,
+        total_type: Optional[_ChartTypes] = None,
+        bgcolor: str = "#ffffff",
+        **kwargs: object,
+    ) -> None:
+        """Constructor.
+
+        Args:
+            flowsheet_export (FlowsheetExport): Exported flowsheet
+            total_type (_ChartTypes, optional): How to represent 'total' information. Defaults to WAFFLE.
+            bgcolor: Plot and overall ('paper') background color, as a valid color string
+            kwargs: Additional key/value pairs passed to the various `create_*` methods
+        """
+        self._kpis = flowsheet_export.kpis
+        self._kpi_ord = flowsheet_export.kpi_order
+        self._kpi_opt = flowsheet_export.kpi_options
+        self._init_layout = None
+        if "layout" in kwargs:
+            self._init_layout = kwargs["layout"]
+            del kwargs["layout"]
+        self._init_options = kwargs
+        if total_type:
+            self._init_options["total_type"] = total_type
+        self._bgcolor = bgcolor
+
+    def html(self, layout: Optional[Any] = None, **kwargs: object) -> str:
+        """Build the report and return as a complete <HTML> element.
+
+        Args:
+            layout: Layout specification. See :class:`Layout` for format. If not given, lay out in one column.
+            kwargs: Options for the `create_*` methods.
+
+        Returns:
+            HTML for the report
+        """
+        body, css = self.build(layout=layout, **kwargs)
+        # return HTML
+        report_css = f"body {{background-color: '{self._bgcolor}';}}"
+        html_head = f"<head><style>{report_css}\n{css}</style></head>"
+        html_body = f"<body>{body}</body>"
+        return f"<html>{html_head}{html_body}</html>"
+
+    _repr_html_ = html  # display automatically in Jupyter Notebooks
+
+    def build(self, layout: Optional[Any] = None, **kwargs: object) -> Tuple[str, str]:
+        """Build the report.
+
+        Args:
+            layout: Layout specification. See :class:`Layout` for format. If not given, lay out in one column.
+            kwargs: Options for the `create_*` methods.
+
+        Returns:
+            A pair of two strings: html body, CSS styles
+        """
+        # combine options from user settings, constructor, and this method
+        options = {}
+        options.update(self._kpi_opt)
+        options.update(self._init_options)
+        options.update(kwargs)
+        # special processing for total_type, if given
+        if "total_type" in options:
+            options["total_type"] = self._preprocess_total_type(options["total_type"])
+        # get HTML block for each KPI
+        kpi_map = {
+            key: self._kpi_html(kpi, **options) for key, kpi in self._kpis.items()
+        }
+        # if no provided layout, put each item in its own row
+        if layout is None and self._init_layout is not None:
+            layout = self._init_layout
+        spec = layout if layout else [[key] for key in self._kpi_ord]
+        _log.debug(f"layout spec={spec}")
+        # perform the layout
+        layout_obj = Layout(spec, kpi_map)
+        return layout_obj.body, layout_obj.css
+
+    @staticmethod
+    def _preprocess_total_type(v: object) -> _ChartTypes:
+        if isinstance(v, _ChartTypes):
+            pass  # do nothing
+        elif isinstance(v, str):
+            s = v.lower().strip()
+            try:
+                v = _ChartTypes[s]
+            except KeyError:
+                raise ValueError(f"Unknown total_type: {v}")
+        else:
+            raise ValueError(
+                f"total_type value must be enumeration or string, got {type(v)}"
+            )
+        return v
+
+    @classmethod
+    def _kpi_html(cls, kpi: KPI, **options: object) -> str:
+        """Get HTML for one KPI.
+
+        Args:
+            options: Keyword options for the `create_*` method called
+                     to create this KPI.
+        """
+        if kpi.is_vector:
+            if kpi.has_total:
+                item = cls.create_total(kpi, **options)
+            else:
+                item = cls.create_barchart(kpi, **options)
+        else:
+            item = cls.create_value(kpi, **options)
+        return item
+
+    @classmethod
+    def create_barchart(cls, kpi: KPI, **ignore: object) -> str:
+        """Create a barchart from a vector of values
+
+        Args:
+            kpi: Key performance indicator
+
+        Returns:
+            HTML of the figure
+        """
+        df = pd.DataFrame(dict(y=kpi.values, x=kpi.labels))
+        u = f" ({kpi.units})"
+        fig = px.bar(
+            df,
+            x="x",
+            y="y",
+            labels={"x": kpi.xlab, "y": kpi.ylab + u},
+            title=kpi.title,
+        )
+        return fig.to_html()
+
+    @classmethod
+    def create_total(
+        cls, kpi: KPI, total_type: _ChartTypes = WAFFLE, **ignore: object
+    ) -> str:
+        """Create diagram for a vector that should be represented as parts of a total.
+        This will be either a pie (donut) chart or waffle chart.
+
+        Args:
+            kpi: Key performance indicator
+
+        Returns:
+            HTML of the figure
+        """
+        if total_type == DONUT:
+            fig = px.pie(names=kpi.labels, values=kpi.values, hole=0.5, title=kpi.title)
+        else:  # total_type == _ChartTypes.waffle
+            fig = cls._waffle_chart(kpi)
+        return fig.to_html()
+
+    @classmethod
+    def _waffle_chart(cls, kpi: KPI) -> Any:
+        """Create a waffle chart using the imshow() plot."""
+        if kpi.total == 0:
+            raise ValueError(
+                f"KPI '{kpi.title}' has total of 0, cannot create waffle chart"
+            )
+        # import here to avoid circular import
+        # sort (value, label) pairs by value
+        val_lab = list(zip(kpi.values, kpi.labels))
+        val_lab.sort(key=itemgetter(0))
+        n = len(val_lab)
+        ttl = kpi.total
+        # convert colors to (r,g,b,a) tuples
+        col_hex = px.colors.qualitative.Alphabet
+        col_rgba = [
+            (int(s[1:3], 16), int(s[3:5], 16), int(s[5:7], 16), 255) for s in col_hex
+        ]
+        # calculate how many boxes to draw for each value
+        # Note: this may be more than the grid size due to ceil() function
+        width = 20
+        grid_sz = width * width
+        val_grid = [int(ceil(val_lab[i][0] / ttl * grid_sz)) for i in range(n)]
+        vec = []
+        for i in range(n):
+            for j in range(val_grid[i]):
+                vec.append(col_rgba[i])
+        # reshape to width x width grid
+        nv = len(vec)
+        # add empty squares at end of last row
+        rows = int(ceil(nv / width))
+        for i in range(rows * width - nv):
+            vec.append((255, 255, 255, 255))
+        arr = np.array(vec, dtype=np.uint8)
+        z = arr.reshape(width, rows, 4)
+        # draw lines between squares
+        ncol, nrow = z.shape[0], z.shape[1]
+        fig = px.imshow(z, title=kpi.title)
+        line_style = {"color": "white", "width": 2}
+        for i in range(ncol):
+            fig.add_shape(
+                type="line",
+                x0=i + 0.5,
+                y0=-0.5,
+                x1=i + 0.5,
+                y1=ncol - 0.5,
+                line=line_style,
+            )
+        for i in range(nrow - 1):
+            fig.add_shape(
+                type="line",
+                x0=-0.5,
+                y0=i + 0.5,
+                x1=nrow - 0.5,
+                y1=i + 0.5,
+                line=line_style,
+            )
+        # add fake traces to create a legend
+        scatter_kw = dict(x=[None], y=[None], mode="markers")
+        for i, (val, lab) in enumerate(val_lab):
+            col = col_hex[i]
+            mark = dict(size=7, color=col, symbol="square")
+            grid_pct = 100 / grid_sz
+            if val / ttl < 1 / grid_sz:
+                pct_str = f"<{grid_pct:.2f}%"
+            else:
+                pct = int(val_grid[i] * grid_pct)
+                pct_str = f"{pct:2d}%"
+            short_val = f"{val:0.3g}"
+            name = f"{lab:2s}  {pct_str} {short_val}"
+            fig.add_trace(go.Scatter(name=name, marker=mark, **scatter_kw))
+        # style plot
+        fig.update_layout(
+            width=800,
+            xaxis_visible=False,
+            yaxis_visible=False,
+            showlegend=True,
+            font_family="Courier New",  # fixed-width
+            font_color="#333",
+            title_font_family="Arial",
+            legend_title_font_color="#666",
+        )
+        return fig
+
+    @classmethod
+    def create_value(
+        cls, kpi: KPI, fmtspec: str = ".6f", stack: bool = True, **ignore: object
+    ) -> str:
+        """Create 'diagram' for a single value.
+
+        Args:
+            kpi: Key performance indicator
+            fmtspec (str, optional): Format specification for the value. Defaults to ".6f".
+            stack (bool): Whether label and value should be stacked vertically
+
+        Returns:
+            HTML of the figure
+        """
+        value = kpi.values[0]  # it's always a list of length 1
+        fvalue = format(value, fmtspec)
+        # represent units
+        if kpi.units:
+            u = kpi.units
+            if u != "%":
+                u = f" ({u})"
+        else:
+            u = ""
+        # style label and value
+        title_span = (
+            f"<span style='font-size: {cls.VALUE_FONT_NAME_SIZE}; "
+            + f"color: {cls.VALUE_FONT_NAME_COLOR}'>{kpi.title}</span>"
+        )
+        val_span = (
+            f"<span style='font-size: {cls.VALUE_FONT_VAL_SIZE}; "
+            + f"color: {cls.VALUE_FONT_VAL_COLOR}'>{fvalue}{u}</span>"
+        )
+        if stack:
+            chunk = f"{title_span}<br/>{val_span}"
+        else:
+            sep = f"<span style='margin-left: {cls.VALUE_SEP_WIDTH}'>&nbsp;</span>"
+            chunk = f"{title_span}{sep}{val_span}"
+        p = f"<p style='margin-left: 2em'>{chunk}</p>"
+        return p
+
+
+class Layout:
+    """Translate a simple layout specification into an HTML flex layout.
+
+    The specification takes the form of a (possibly nested) list of
+    names of the KPIs to display, where the outer list is a single
+    column and the next level are rows, then columns within each row, etc.
+
+    Some examples:
+
+    * `[ "kpi_one", "kpi_two", "kpi_three" ]` will display 4 rows, each the full column width.
+    * `[["kpi_one", "kpi_two", "kpi_three"]]` will display 1 row with items laid out horizontally
+    * `[["kpi_one", "kpi_two"], ["kpi_three", "kpi_four"]]` will display a 2x2 grid
+    """
+
+    FLOW_COL, FLOW_ROW = "grid_column", "grid_row"
+
+    def __init__(self, spec, kpis: dict[str, str]):
+        """Create new layout.
+
+        Args:
+            spec: Layout specification (see class docstring)
+            kpis: Mapping of KPI names to HTML. These names should match names in `spec`.
+        """
+        self._kpis = kpis
+        self._divs = self._to_divs(spec, self.FLOW_COL)
+
+    @property
+    def body(self):
+        return "".join(self._divs)
+
+    @property
+    def css(self):
+        rules = (
+            ".grid_row {display: flex; flex-direction: row;}",
+            ".grid_column {display: flex; flex-direction: column}",
+        )
+        return "\n".join(rules)
+
+    def _toggle_flow(self, flow):
+        return self.FLOW_COL if flow == self.FLOW_ROW else self.FLOW_ROW
+
+    def _to_divs(self, item, flow):
+        divs = [f"<div class='{flow}'>"]
+        if isinstance(item, list):
+            next_flow = self._toggle_flow(flow)
+            for child in item:
+                divs.extend(self._to_divs(child, next_flow))
+        else:
+            kpi_html = self._kpis[item]
+            divs.append(kpi_html)
+        divs.append("</div>")
+        return divs
