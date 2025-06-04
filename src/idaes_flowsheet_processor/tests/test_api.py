@@ -513,7 +513,7 @@ def kpi_export():
         units="totalUnits",
         total_label="total label",
     )
-    yield exp
+    return exp
 
 
 @pytest.mark.unit
@@ -738,7 +738,6 @@ def test_flowsheetreport_create_total_chart(kpi_export):
         units="totalUnits",
         total_label="total label",
     )
-    yield exp
     # Test create_total for a KPI with has_total
     for kpi in kpi_export.kpis.values():
         if kpi.is_vector and kpi.has_total:
