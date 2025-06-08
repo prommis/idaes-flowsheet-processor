@@ -193,7 +193,7 @@ class KPI(BaseModel):
     has_total: bool
     name: str
     title: str
-    units: str = "none"
+    units: List[str] = []
     values: List[float] = []
     labels: List[str] = []
     xlab: str = ""
@@ -377,6 +377,11 @@ class FlowsheetExport(BaseModel):
         self.exports[key] = model_export
         return model_export
 
+    def clear_kpis(self) -> None:
+        self.kpis = {}
+        self.kpi_order = []
+        self.kpi_options = {}
+
     def add_kpi_values(
         self,
         name: str,
@@ -407,7 +412,7 @@ class FlowsheetExport(BaseModel):
         self.kpi_order.append(name)
 
     def _add_kpi_vector(self, name, kwargs):
-        kpi = KPI(**kwargs)
+        kpi = KPI(name=name, **kwargs)
         self.kpis[name] = kpi
         self.kpi_order.append(name)
 
@@ -419,7 +424,7 @@ class FlowsheetExport(BaseModel):
         title: str,
         xlab: Optional[str] = None,
         ylab: Optional[str] = None,
-        units: str = "",
+        units: SyntaxWarning = "none",
     ) -> None:
         """Add a KeyPerformance Indicator (KPI) vector for a barchart.
 
@@ -440,8 +445,9 @@ class FlowsheetExport(BaseModel):
                 title=title,
                 xlab=xlab,
                 ylab=ylab,
-                units=units,
+                units=[units],
                 has_total=False,
+                is_table=False,
             ),
         )
 
@@ -470,9 +476,11 @@ class FlowsheetExport(BaseModel):
                 values=values,
                 labels=labels,
                 title=title,
-                units=units,
+                units=[units],
                 total=total,
                 has_total=True,
+                is_table=False,
+                total_label=total_label,
             ),
         )
 
@@ -680,6 +688,7 @@ class Actions(str, Enum):
     export = "_export"
     diagram = "diagram"
     initialize = "initialize"
+    kpis = "kpis"
 
 
 class FlowsheetCategory(str, Enum):
@@ -726,6 +735,7 @@ class FlowsheetInterface:
         do_export: Optional[Callable] = None,
         do_solve: Optional[Callable] = None,
         do_initialize: Optional[Callable] = None,
+        do_kpis: Optional[Callable] = None,
         get_diagram: Optional[Callable] = None,
         category: Optional["FlowsheetCategory"] = None,
         custom_do_param_sweep_kwargs: Optional[Dict] = None,
@@ -745,6 +755,7 @@ class FlowsheetInterface:
                 This will be called automatically by :meth:`build()`. **Required**
             do_solve: Function to solve the model. It should return the result
                 that the solver itself returns. **Required**
+            do_kpis: Function to set KPIs.
             custom_do_param_sweep_kwargs: Option for setting up parallel solver using
                 custom solve function.
             **kwargs: See `fs` arg. If the `fs` arg *is* provided, these are ignored.
@@ -768,6 +779,10 @@ class FlowsheetInterface:
                 self.add_action(getattr(Actions, name), arg)
             else:
                 raise ValueError(f"'do_{name}' argument is required")
+        # optional kpis
+        if callable(do_kpis):
+            self.add_action(Actions.kpis, do_kpis)
+        # optional diagram
         if callable(get_diagram):
             self.add_action("diagram", get_diagram)
         else:
@@ -966,9 +981,11 @@ class FlowsheetInterface:
             None
         """
 
-        # print(f'ADDING ACTION: {action_name}')
+        _log.debug(f"adding action: {action_name}")
+
         # print(action_func)
         def action_wrapper(*args, **kwargs):
+            _log.debug(f"running action: {action_name}")
             if action_name == Actions.build:
                 # set new model object from return value of build action
                 action_result = action_func(**kwargs)
@@ -993,6 +1010,7 @@ class FlowsheetInterface:
                 self.get_action(Actions.export)(
                     exports=self.fs_exp, build_options=self.fs_exp.build_options
                 )
+                # done
                 result = None
             elif action_name == Actions.diagram:
                 self._actions[action_name] = action_func
@@ -1006,8 +1024,11 @@ class FlowsheetInterface:
                     f"'{Actions.build}') before flowsheet is built"
                 )
             else:
-                result = action_func(flowsheet=self.fs_exp.obj, **kwargs)
-                # Issue 755: Report optimization errors
+                if action_name == Actions.kpis:
+                    result = action_func(exports=self.fs_exp, flowsheet=self.fs_exp.obj)
+                else:
+                    # all others, call with flowsheet object
+                    result = action_func(flowsheet=self.fs_exp.obj, **kwargs)
                 if action_name == Actions.solve:
                     _log.debug(f"Solve result: {result}")
                     if result is None:
@@ -1017,6 +1038,11 @@ class FlowsheetInterface:
             # Sync model with exported values
             if action_name in (Actions.build, Actions.solve, Actions.initialize):
                 self.export_values()
+                # (re-)add KPIs if any specified
+                if Actions.kpis in self._actions:
+                    _log.debug(f"Adding KPIs")
+                    self.fs_exp.clear_kpis()
+                    self.run_action(Actions.kpis, self.fs_exp)
             return result
 
         self._actions[action_name] = action_wrapper
@@ -1317,34 +1343,36 @@ class FlowsheetReport:
             else:
                 item = cls.create_kpi_barchart(kpi, **options)
         else:
-            item = cls.create_kpi_value(kpi, **options)
+            item = cls.create_kpi_values(kpi, **options)
         return item
 
     @classmethod
     def create_kpi_values(
-        names, values, units=None, font_size=24, width=400, margin=None
+        cls,
+        kpi,
+        font_size: int = 24,
+        width: int = 800,
+        margin: Optional[int] = None,
+        **ignore: object,
     ) -> go.Figure:
         """Create a table with values for each KPI.
 
         Args:
-            names: List of names for each KPI
-            values: List of values for each KPI
-            units: List of units for each KPI, or None if no units
-            font_size: Font size for the table
-            width: Width of the table
-            margin: Margin around the table, as a dict with keys 't', 'b', 'l', 'r'
+            kpi
+            font_size: Font size for the table, in points
+            width: Width of the table in pixels
+            margin: Margin around the table, as a dict with keys 't', 'b', 'l', 'r'. Values in pixels.
 
         Returns:
             Plotly Figure object with values in a table
         """
         row_height = int(font_size * 1.5)
         colors = ["#9999ff", "black"]
-        if units is not None:
-            new_values = []
-            for u, v in zip(units, values):
-                new_values.append(f"{v} {u}")
-            values = new_values
-        value_columns = [names, values]
+        if kpi.units is None:
+            values = kpi.values
+        else:
+            values = [f"{v} {u}" for u, v in zip(kpi.units, kpi.values)]
+        value_columns = [kpi.labels, values]
         data = [
             {
                 "type": "table",
@@ -1365,7 +1393,7 @@ class FlowsheetReport:
         layout = {
             "width": width,
             "margin": margin or {"t": 20, "b": 20, "l": 20},
-            "height": 64 + row_height * len(names),
+            "height": 64 + row_height * len(kpi.labels),
         }
         return go.Figure(data, layout=layout)
 
@@ -1380,7 +1408,7 @@ class FlowsheetReport:
             Plotly Figure object with the bar chart
         """
         df = pd.DataFrame(dict(y=kpi.values, x=kpi.labels))
-        u = f" ({kpi.units})"
+        u = f" ({kpi.units[0]})"
         fig = px.bar(
             df,
             x="x",
@@ -1403,6 +1431,7 @@ class FlowsheetReport:
         Returns:
             Plotly Figure object with the pie or waffle chart
         """
+        kpi.units = kpi.units[0]
         if total_type == DONUT:
             fig = px.pie(names=kpi.labels, values=kpi.values, hole=0.5, title=kpi.title)
         else:  # total_type == _ChartTypes.waffle

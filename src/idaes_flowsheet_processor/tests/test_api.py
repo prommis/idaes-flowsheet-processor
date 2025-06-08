@@ -545,8 +545,8 @@ def test_flowsheet_export_kpi(kpi_export):
             "is_table": False,
             "has_total": False,
             "name": _kpi_vec,
-            "title": "vector title",
-            "units": "vectorUnits",
+            "title": f"{_kpi_vec} title",
+            "units": [f"{_kpi_vec}Units"],
             "values": [1.2, -1.2],
             "labels": ["vlabel1", "vlabel2"],
             "xlab": "x label",
@@ -558,8 +558,8 @@ def test_flowsheet_export_kpi(kpi_export):
             "is_table": False,
             "has_total": True,
             "name": _kpi_ttl,
-            "title": "total title",
-            "units": "totalUnits",
+            "title": f"{_kpi_ttl} title",
+            "units": [f"{_kpi_ttl}Units"],
             "values": [1.2, 1.3],
             "labels": ["tlabel1", "tlabel2"],
             "xlab": "",
@@ -571,6 +571,7 @@ def test_flowsheet_export_kpi(kpi_export):
     for name in (_kpi_val, _kpi_vec, _kpi_ttl):
         got = kpis[name]
         for k in got:
+            print(f"Checking {name}.{k}: got={got[k]}, expect={expect[name][k]}")
             assert got[k] == expect[name][k]
 
 
@@ -734,6 +735,7 @@ def test_flowsheetprocessor_get_figures(kpi_export):
     figs = rpt.get_kpi_figures()
     assert len(figs) == _kpi_num
     # verify they can be converted to JSON
-    for fig in figs:
+    for fig_name, fig in figs.items():
+        print(f"Figure {fig_name} to_json()")
         fig_json = fig.to_json()
         assert fig_json
