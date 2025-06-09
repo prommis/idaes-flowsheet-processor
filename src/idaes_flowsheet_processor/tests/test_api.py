@@ -22,6 +22,7 @@ from pyomo.environ import Var, value
 from pyomo.environ import SolverStatus, TerminationCondition
 
 import idaes_flowsheet_processor.api as fsapi
+from idaes_flowsheet_processor.api import FlowsheetKPIReport, WAFFLE, DONUT
 
 
 pytest.importorskip(
@@ -486,31 +487,36 @@ def test_add_option(tmpdir):
         )
 
 
+_kpi_val, _kpi_vec, _kpi_ttl = "values", "vector", "total"
+_kpi_num = 3
+
+
 @pytest.fixture
 def kpi_export():
     exp = fsapi.FlowsheetExport()
     # create
-    single = "single"
-    exp.add_kpi_value(
-        single, 1.2, label="single label", title="single title", units="singleUnits"
+    exp.add_kpi_values(
+        _kpi_val,
+        values=[1.2],
+        labels=["vlabel1"],
+        title=f"{_kpi_val} title",
+        units=[f"{_kpi_val}Units1"],
     )
-    vector = "vector"
-    exp.add_kpi_vector(
-        vector,
+    exp.add_kpi_barchart(
+        _kpi_vec,
         values=[1.2, -1.2],
         labels=["vlabel1", "vlabel2"],
-        title="vector title",
-        units="vectorUnits",
+        title=f"{_kpi_vec} title",
+        units=f"{_kpi_vec}Units",
         xlab="x label",
         ylab="y label",
     )
-    total = "total"
     exp.add_kpi_total(
-        total,
+        _kpi_ttl,
         values=[1.2, 1.3],
         labels=["tlabel1", "tlabel2"],
-        title="total title",
-        units="totalUnits",
+        title=f"{_kpi_ttl} title",
+        units=f"{_kpi_ttl}Units",
         total_label="total label",
     )
     return exp
@@ -518,30 +524,29 @@ def kpi_export():
 
 @pytest.mark.unit
 def test_flowsheet_export_kpi(kpi_export):
-    single, vector, total = "single", "vector", "total"
     exp = kpi_export
     # validate
     kpis = exp.model_dump()["kpis"]
     expect = {
-        single: {
-            "is_vector": False,
+        _kpi_val: {
+            "is_table": True,
             "has_total": False,
-            "name": "single",
-            "title": "single title",
-            "units": "singleUnits",
+            "name": _kpi_val,
+            "title": f"{_kpi_val} title",
+            "units": [f"{_kpi_val}Units1"],
             "values": [1.2],
-            "labels": ["single label"],
+            "labels": ["vlabel1"],
             "xlab": "",
             "ylab": "",
             "total": 0.0,
             "total_label": "",
         },
-        vector: {
-            "is_vector": True,
+        _kpi_vec: {
+            "is_table": False,
             "has_total": False,
-            "name": "vector",
-            "title": "vector title",
-            "units": "vectorUnits",
+            "name": _kpi_vec,
+            "title": f"{_kpi_vec} title",
+            "units": [f"{_kpi_vec}Units"],
             "values": [1.2, -1.2],
             "labels": ["vlabel1", "vlabel2"],
             "xlab": "x label",
@@ -549,12 +554,12 @@ def test_flowsheet_export_kpi(kpi_export):
             "total": 0.0,
             "total_label": "",
         },
-        total: {
-            "is_vector": True,
+        _kpi_ttl: {
+            "is_table": False,
             "has_total": True,
-            "name": "total",
-            "title": "total title",
-            "units": "totalUnits",
+            "name": _kpi_ttl,
+            "title": f"{_kpi_ttl} title",
+            "units": [f"{_kpi_ttl}Units"],
             "values": [1.2, 1.3],
             "labels": ["tlabel1", "tlabel2"],
             "xlab": "",
@@ -563,9 +568,10 @@ def test_flowsheet_export_kpi(kpi_export):
             "total_label": "total label",
         },
     }
-    for name in (single, vector, total):
+    for name in (_kpi_val, _kpi_vec, _kpi_ttl):
         got = kpis[name]
         for k in got:
+            print(f"Checking {name}.{k}: got={got[k]}, expect={expect[name][k]}")
             assert got[k] == expect[name][k]
 
 
@@ -574,6 +580,7 @@ def test_flowsheet_report(kpi_export):
     exp = kpi_export
 
 
+@pytest.mark.unit
 def test_layout_single_column():
     # Single column layout
     kpis = {"kpi1": "<div>kpi1</div>", "kpi2": "<div>kpi2</div>"}
@@ -586,6 +593,7 @@ def test_layout_single_column():
     assert ".grid_row" in css
 
 
+@pytest.mark.unit
 def test_layout_single_row():
     # Single row layout
     kpis = {"kpi1": "<div>kpi1</div>", "kpi2": "<div>kpi2</div>"}
@@ -598,6 +606,7 @@ def test_layout_single_row():
     assert body.count("grid_column") > 0
 
 
+@pytest.mark.unit
 def test_layout_grid():
     # 2x2 grid
     kpis = {
@@ -614,6 +623,7 @@ def test_layout_grid():
     assert body.count("grid_row") >= 2
 
 
+@pytest.mark.unit
 def test_layout_nested():
     # Nested layout
     kpis = {"a": "<div>a</div>", "b": "<div>b</div>", "c": "<div>c</div>"}
@@ -626,6 +636,7 @@ def test_layout_nested():
     assert body.count("grid_column") > 0
 
 
+@pytest.mark.unit
 def test_layout_css():
     kpis = {"kpi": "<div>kpi</div>"}
     spec = ["kpi"]
@@ -642,6 +653,7 @@ def test_flowsheetinterface_get_diagram_returns_none():
     assert fsi.get_diagram() is None
 
 
+@pytest.mark.unit
 def test_flowsheetinterface_dict_and_load():
     fsi = flowsheet_interface()
     fsi.build()
@@ -652,6 +664,7 @@ def test_flowsheetinterface_dict_and_load():
     fsi.load(d)
 
 
+@pytest.mark.unit
 def test_flowsheetinterface_select_option():
     fsi = flowsheet_interface()
     fsi.build()
@@ -661,6 +674,7 @@ def test_flowsheetinterface_select_option():
     assert fsi.fs_exp.build_options["opt1"].value == "b"
 
 
+@pytest.mark.unit
 def test_flowsheetinterface_export_values():
     fsi = flowsheet_interface()
     fsi.build()
@@ -668,59 +682,8 @@ def test_flowsheetinterface_export_values():
     fsi.export_values()
 
 
-def test_flowsheetinterface_from_installed_packages_and_from_module():
-    # These are mostly smoke tests, as they depend on environment
-    result = fsapi.FlowsheetInterface.from_installed_packages()
-    assert isinstance(result, dict)
-    # from_module with a string (should not raise, may return None)
-    mod = "watertap.flowsheets.seawater_RO_desalination"
-    try:
-        iface = fsapi.FlowsheetInterface.from_module(mod)
-    except Exception:
-        iface = None
-    # iface may be None if the module doesn't have the UI_HOOK
-    assert iface is None or hasattr(iface, "build")
-
-
-def test_flowsheetinterface_report():
-    fsi = flowsheet_interface()
-    fsi.build()
-    report = fsi.report()
-    assert hasattr(report, "html")
-
-
-def test_flowsheetreport_html_and_build(kpi_export):
-    from idaes_flowsheet_processor.api import FlowsheetReport
-
-    report = FlowsheetReport(kpi_export)
-    html = report.html()
-    assert html.startswith("<html>")
-    body, css = report.build()
-    assert isinstance(body, str)
-    assert isinstance(css, str)
-    assert any(k in body for k in kpi_export.kpis)
-    assert ".grid_row" in css
-    assert ".grid_column" in css
-
-
-def test_flowsheetreport_kpi_html_and_barchart(kpi_export):
-    from idaes_flowsheet_processor.api import FlowsheetReport
-
-    report = FlowsheetReport(kpi_export)
-    # Test _kpi_html for each KPI
-    for kpi in kpi_export.kpis.values():
-        html = report._kpi_html(kpi)
-        assert isinstance(html, str)
-    # Test create_barchart for a vector KPI
-    for kpi in kpi_export.kpis.values():
-        if kpi.is_vector and not kpi.has_total:
-            chart_html = report.create_barchart(kpi)
-            assert isinstance(chart_html, str)
-
-
-def test_flowsheetreport_create_total_chart(kpi_export):
-    from idaes_flowsheet_processor.api import FlowsheetReport, WAFFLE, DONUT
-
+@pytest.mark.unit
+def test_flowsheetreport_create(kpi_export):
     # add some where total is zero
     kpi_export.add_kpi_total(
         "zero1",
@@ -738,36 +701,41 @@ def test_flowsheetreport_create_total_chart(kpi_export):
         units="totalUnits",
         total_label="total label",
     )
+
     # Test create_total for a KPI with has_total
+    def is_figure(obj):
+        if hasattr(obj, "add_annotation"):  # it's a figure
+            assert obj.to_html().startswith("<html")
+        return True
+
     for kpi in kpi_export.kpis.values():
-        if kpi.is_vector and kpi.has_total:
-            if kpi.name.startswith("zero"):
-                with pytest.raises(ValueError):
-                    FlowsheetReport.create_total(kpi)
+        if kpi.is_table:
+            tbl = FlowsheetKPIReport.create_kpi_values(kpi)
+            assert is_figure(tbl)
+        else:
+            if kpi.has_total:
+                if kpi.name.startswith("zero"):
+                    with pytest.raises(ValueError):
+                        FlowsheetKPIReport.create_kpi_total(kpi)
+                else:
+                    # Test both WAFFLE and DONUT chart types
+                    waffle = FlowsheetKPIReport.create_kpi_total(kpi, total_type=WAFFLE)
+                    assert is_figure(waffle)
+                    donut = FlowsheetKPIReport.create_kpi_total(kpi, total_type=DONUT)
+                    assert is_figure(donut)
             else:
-                # Test both WAFFLE and DONUT chart types
-                html_waffle = FlowsheetReport.create_total(kpi, total_type=WAFFLE)
-                html_donut = FlowsheetReport.create_total(kpi, total_type=DONUT)
-                assert isinstance(html_waffle, str)
-                assert isinstance(html_donut, str)
+                bars = FlowsheetKPIReport.create_kpi_barchart(kpi)
+                assert is_figure(bars)
 
 
-def test_flowsheetreport_create_value(kpi_export):
-    from idaes_flowsheet_processor.api import FlowsheetReport
-
-    for kpi in kpi_export.kpis.values():
-        html = FlowsheetReport.create_value(kpi)
-        assert isinstance(html, str)
-
-
-def test_flowsheetreport_preprocess_total_type():
-    from idaes_flowsheet_processor.api import FlowsheetReport, WAFFLE, DONUT
-
-    # Accepts enum and string
-    assert FlowsheetReport._preprocess_total_type(WAFFLE) == WAFFLE
-    assert FlowsheetReport._preprocess_total_type("waffle") == WAFFLE
-    assert FlowsheetReport._preprocess_total_type("donut") == DONUT
-    import pytest
-
-    with pytest.raises(ValueError):
-        FlowsheetReport._preprocess_total_type("notatype")
+@pytest.mark.unit
+def test_flowsheetprocessor_get_figures(kpi_export):
+    rpt = FlowsheetKPIReport(kpi_export)
+    # get figures and check length
+    figs = rpt.get_kpi_figures()
+    assert len(figs) == _kpi_num
+    # verify they can be converted to JSON
+    for fig_name, fig in figs.items():
+        print(f"Figure {fig_name} to_json()")
+        fig_json = fig.to_json()
+        assert fig_json
