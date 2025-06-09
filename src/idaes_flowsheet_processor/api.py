@@ -16,6 +16,7 @@ Simple flowsheet interface API
 __author__ = "Dan Gunter"
 
 # stdlib
+import abc
 import importlib
 from collections import namedtuple
 from csv import reader, writer
@@ -30,8 +31,10 @@ import inspect
 import logging
 from math import ceil
 from operator import itemgetter
+import os
 from pathlib import Path
 import re
+import sys
 from typing import Any, Callable, List, Optional, Dict, Tuple, Union, TypeVar
 from types import ModuleType
 
@@ -50,6 +53,8 @@ import plotly.graph_objects as go
 import numpy as np
 import pandas as pd
 from IPython.core.display import HTML
+
+from .util import ShortPrefix
 
 #: Forward-reference to a FlowsheetInterface type, used in
 #: :meth:`FlowsheetInterface.find`
@@ -698,11 +703,26 @@ class FlowsheetCategory(str, Enum):
     desalination = "Desalination"
 
 
+class FlowsheetReport(abc.ABC):
+    """Abstract base class for flowsheet reports.
+
+    This class defines the interface for generating reports from a flowsheet.
+    Subclasses should implement the `to_html` method to generate the report in HTML format.
+    """
+
+    @abc.abstractmethod
+    def to_html(self, **kwargs: object) -> str:
+        """Return report as an HTML string."""
+        pass
+
+
 class FlowsheetInterface:
     """Interface between users, UI developers, and flowsheet models."""
 
     #: Function to look for in modules. See :meth:`find`.
     UI_HOOK = "export_to_ui"
+
+    _KPI_REPORT = "Key Performance Indicators"
 
     #: Type of item in list ``MissingObjectError.missing``.
     #: ``key`` is the unique key assigned to the variable,
@@ -779,9 +799,11 @@ class FlowsheetInterface:
                 self.add_action(getattr(Actions, name), arg)
             else:
                 raise ValueError(f"'do_{name}' argument is required")
+        report_types = []
         # optional kpis
         if callable(do_kpis):
             self.add_action(Actions.kpis, do_kpis)
+            report_types.append(self._KPI_REPORT)
         # optional diagram
         if callable(get_diagram):
             self.add_action("diagram", get_diagram)
@@ -790,10 +812,14 @@ class FlowsheetInterface:
 
         self._actions["custom_do_param_sweep_kwargs"] = custom_do_param_sweep_kwargs
 
-    def build(self, **kwargs: object) -> None:
+        # for selecting report types
+        self._report_prefix = ShortPrefix(report_types)
+
+    def build(self, quiet=False, **kwargs: object) -> None:
         """Build flowsheet
 
         Args:
+            quiet: If true, suppress output from the build function
             **kwargs: User-defined values
 
         Returns:
@@ -803,9 +829,23 @@ class FlowsheetInterface:
             RuntimeError: If the build fails
         """
         try:
-            self.run_action(Actions.build, **kwargs)
-        except Exception as err:
-            raise RuntimeError(f"Building flowsheet: {err}") from err
+            if quiet:
+                _save_loglevel = _log.getEffectiveLevel()
+                _log.setLevel(logging.WARNING)
+                idaes_log = logging.getLogger("idaes")
+                _save_idaes_loglevel = idaes_log.getEffectiveLevel()
+                idaes_log.setLevel(logging.WARNING)
+                _save_stdout = sys.stdout
+                sys.stdout = open(os.devnull, "w")
+            try:
+                self.run_action(Actions.build, **kwargs)
+            except Exception as err:
+                raise RuntimeError(f"Building flowsheet: {err}") from err
+        finally:
+            if quiet:
+                sys.stdout = _save_stdout
+                _log.setLevel(_save_loglevel)
+                idaes_log.setLevel(_save_idaes_loglevel)
         return
 
     def solve(self, **kwargs: object) -> Any:
@@ -980,10 +1020,8 @@ class FlowsheetInterface:
         Returns:
             None
         """
-
         _log.debug(f"adding action: {action_name}")
 
-        # print(action_func)
         def action_wrapper(*args, **kwargs):
             _log.debug(f"running action: {action_name}")
             if action_name == Actions.build:
@@ -1197,19 +1235,38 @@ class FlowsheetInterface:
         # Return created FlowsheetInterface
         return interface
 
-    def report(self, **kwargs: object) -> "FlowsheetReport":
-        """Create HTML flowsheet report.
+    def report(self, rtype=_KPI_REPORT, **kwargs: object) -> FlowsheetReport:
+        """Generate and return a report for the flowsheet.
+
+
 
         Args:
-            kwargs: Additional keywords passed to :class:`FlowsheetReport`
+            report_type: Type of report to generate (any unique prefix of the report type).
+            kwargs: Additional keywords passed to the given report type.
 
         Raises:
-            ValueError: If the total_type argument is invalid
+            ValueError: If a report argument is invalid
 
         Returns:
             FlowsheetReport: A flowsheet report, which will display automatically in Jupyter Notebooks.
         """
-        return FlowsheetReport(self.fs_exp, **kwargs)
+        m = self._report_prefix.match(rtype)
+        if m is None:
+            cbe = self._report_prefix.could_be(rtype)
+            if cbe:
+                raise ValueError(
+                    f"Report type prefix '{rtype}' has multiple matches: {', '.join(cbe)}"
+                )
+            else:
+                raise ValueError(
+                    f"Unknown report type '{rtype}'. "
+                    f"Valid types are: {', '.join(self._report_prefix.words)}"
+                )
+        if m == self._KPI_REPORT:
+            return FlowsheetKPIReport(self.fs_exp, **kwargs)
+        else:
+            # should never happen, since we already checked the prefix
+            raise RuntimeError("Unknown report type: {report_type}")
 
 
 class _ChartTypes(Enum):
@@ -1221,7 +1278,7 @@ WAFFLE = _ChartTypes.waffle
 DONUT = _ChartTypes.donut
 
 
-class FlowsheetReport:
+class FlowsheetKPIReport(FlowsheetReport):
     """Report of the Key Performance Indicators (KPIs) for a flowsheet.
 
     The specification of the report is extracted from the FlowsheetExport object

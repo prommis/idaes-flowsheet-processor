@@ -22,7 +22,7 @@ from pyomo.environ import Var, value
 from pyomo.environ import SolverStatus, TerminationCondition
 
 import idaes_flowsheet_processor.api as fsapi
-from idaes_flowsheet_processor.api import FlowsheetReport, WAFFLE, DONUT
+from idaes_flowsheet_processor.api import FlowsheetKPIReport, WAFFLE, DONUT
 
 
 pytest.importorskip(
@@ -710,27 +710,27 @@ def test_flowsheetreport_create(kpi_export):
 
     for kpi in kpi_export.kpis.values():
         if kpi.is_table:
-            tbl = FlowsheetReport.create_kpi_values(kpi)
+            tbl = FlowsheetKPIReport.create_kpi_values(kpi)
             assert is_figure(tbl)
         else:
             if kpi.has_total:
                 if kpi.name.startswith("zero"):
                     with pytest.raises(ValueError):
-                        FlowsheetReport.create_kpi_total(kpi)
+                        FlowsheetKPIReport.create_kpi_total(kpi)
                 else:
                     # Test both WAFFLE and DONUT chart types
-                    waffle = FlowsheetReport.create_kpi_total(kpi, total_type=WAFFLE)
+                    waffle = FlowsheetKPIReport.create_kpi_total(kpi, total_type=WAFFLE)
                     assert is_figure(waffle)
-                    donut = FlowsheetReport.create_kpi_total(kpi, total_type=DONUT)
+                    donut = FlowsheetKPIReport.create_kpi_total(kpi, total_type=DONUT)
                     assert is_figure(donut)
             else:
-                bars = FlowsheetReport.create_kpi_barchart(kpi)
+                bars = FlowsheetKPIReport.create_kpi_barchart(kpi)
                 assert is_figure(bars)
 
 
 @pytest.mark.unit
 def test_flowsheetprocessor_get_figures(kpi_export):
-    rpt = FlowsheetReport(kpi_export)
+    rpt = FlowsheetKPIReport(kpi_export)
     # get figures and check length
     figs = rpt.get_kpi_figures()
     assert len(figs) == _kpi_num
