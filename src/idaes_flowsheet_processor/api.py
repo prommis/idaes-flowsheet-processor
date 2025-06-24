@@ -61,7 +61,8 @@ from .util import ShortPrefix
 FSI = TypeVar("FSI", bound="FlowsheetInterface")
 
 
-_log = logging.getLogger(__name__)
+_log = logging.getLogger("idaes." + __name__)
+_log.setLevel(logging.INFO)
 
 
 class UnsupportedObjType(TypeError):
@@ -292,6 +293,7 @@ class FlowsheetExport(BaseModel):
     kpis: Dict[str, KPI] = {}
     kpi_order: list[str] = []
     kpi_options: Dict = {}
+    kpi_figures: Dict = {}
     version: int = 2
     requires_idaes_solver: bool = False
     dof: int = 0
@@ -1078,9 +1080,11 @@ class FlowsheetInterface:
                 self.export_values()
                 # (re-)add KPIs if any specified
                 if Actions.kpis in self._actions:
-                    _log.debug(f"Adding KPIs")
+                    _log.info("Calculating and exporting KPIs")
                     self.fs_exp.clear_kpis()
                     self.run_action(Actions.kpis, self.fs_exp)
+                else:
+                    _log.info("No KPIs present")
             return result
 
         self._actions[action_name] = action_wrapper
