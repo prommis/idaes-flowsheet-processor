@@ -16,6 +16,7 @@ Simple flowsheet interface API
 __author__ = "Dan Gunter"
 
 # stdlib
+import abc
 import importlib
 from collections import namedtuple
 from csv import reader, writer
@@ -30,8 +31,10 @@ import inspect
 import logging
 from math import ceil
 from operator import itemgetter
+import os
 from pathlib import Path
 import re
+import sys
 from typing import Any, Callable, List, Optional, Dict, Tuple, Union, TypeVar
 from types import ModuleType
 
@@ -51,12 +54,15 @@ import numpy as np
 import pandas as pd
 from IPython.core.display import HTML
 
+from .util import ShortPrefix
+
 #: Forward-reference to a FlowsheetInterface type, used in
 #: :meth:`FlowsheetInterface.find`
 FSI = TypeVar("FSI", bound="FlowsheetInterface")
 
 
-_log = logging.getLogger(__name__)
+_log = logging.getLogger("idaes." + __name__)
+_log.setLevel(logging.INFO)
 
 
 class UnsupportedObjType(TypeError):
@@ -189,11 +195,11 @@ class ModelExport(BaseModel):
 class KPI(BaseModel):
     """Key Performance Indicator"""
 
-    is_vector: bool
+    is_table: bool
     has_total: bool
     name: str
     title: str
-    units: str = "none"
+    units: List[str] = []
     values: List[float] = []
     labels: List[str] = []
     xlab: str = ""
@@ -287,6 +293,7 @@ class FlowsheetExport(BaseModel):
     kpis: Dict[str, KPI] = {}
     kpi_order: list[str] = []
     kpi_options: Dict = {}
+    kpi_figures: Dict = {}
     version: int = 2
     requires_idaes_solver: bool = False
     dof: int = 0
@@ -377,35 +384,46 @@ class FlowsheetExport(BaseModel):
         self.exports[key] = model_export
         return model_export
 
-    def add_kpi_value(
-        self, name: str, value: float, label: str = "", title: str = "", units: str = ""
+    def clear_kpis(self) -> None:
+        self.kpis = {}
+        self.kpi_order = []
+        self.kpi_options = {}
+
+    def add_kpi_values(
+        self,
+        name: str,
+        values: List[float],
+        labels: List[str],
+        units: Optional[List[str]],
+        title: str = "",
     ) -> None:
-        """Add a Key Performance Indicator (KPI) with a single value.
+        """Add a Key Performance Indicator (KPI) for a table of names and values.
 
         Args:
-            name (str): Name of the KPI
-            value (float): Numeric value
-            label (str): Label for the numeric value
+            name: Name of the KPI
+            values: Numeric values
+            labels: Labels corresponding to values
             title: Overall description
-            units (str, optional): Units for the value. Defaults to "".
+            units: Descriptive units for the values (optional)
         """
-        if not title:
-            title = label
-        elif not label:
-            label = title
         kpi = KPI(
-            is_vector=False,
+            is_table=True,
             has_total=False,
             name=name,
             title=title,
-            values=[value],
-            labels=[label],
+            values=values,
+            labels=labels,
             units=units,
         )
         self.kpis[name] = kpi
         self.kpi_order.append(name)
 
-    def add_kpi_vector(
+    def _add_kpi_vector(self, name, kwargs):
+        kpi = KPI(name=name, **kwargs)
+        self.kpis[name] = kpi
+        self.kpi_order.append(name)
+
+    def add_kpi_barchart(
         self,
         name: str,
         values: List[float],
@@ -413,31 +431,32 @@ class FlowsheetExport(BaseModel):
         title: str,
         xlab: Optional[str] = None,
         ylab: Optional[str] = None,
-        units: str = "",
+        units: SyntaxWarning = "none",
     ) -> None:
-        """Add a Key Performance Indicator (KPI) with multiple values
+        """Add a KeyPerformance Indicator (KPI) vector for a barchart.
 
         Args:
-            name (str): Name of the KPI
-            values (List[float]): Numeric values
-            labels (List[str]): Labels corresponding to values
-            title: Overall description
-            values_description (str, optional): Overall label for the values (e.g., "Compounds")
-            units (str, optional): Descriptive units for the values
+            name: Name of the KPI
+            values: Numeric values
+            labels: Labels corresponding to values
+            title: Chart title
+            xlab: Label for x axis
+            ylab: Label for y axis
+            units: Units for the values, e.g., "%" if they are percentages adding to 100
         """
-        kpi = KPI(
-            is_vector=True,
-            has_total=False,
-            name=name,
-            title=title,
-            units=units,
-            values=values,
-            labels=labels,
-            xlab=xlab,
-            ylab=ylab,
+        self._add_kpi_vector(
+            name,
+            dict(
+                values=values,
+                labels=labels,
+                title=title,
+                xlab=xlab,
+                ylab=ylab,
+                units=[units],
+                has_total=False,
+                is_table=False,
+            ),
         )
-        self.kpis[name] = kpi
-        self.kpi_order.append(name)
 
     def add_kpi_total(
         self,
@@ -451,26 +470,26 @@ class FlowsheetExport(BaseModel):
         """Add a Key Performance Indicator (KPI) vector with multiple values and a total
 
         Args:
-            name (str): Name of the KPI
-            values (List[float]): Numeric values
-            labels (List[str]): Labels corresponding to values
+            name: Name of the KPI
+            values: Numeric values
+            labels: Labels corresponding to values
             total_label: Label for the 'total' to which the values sum.
-            units (str, optional): Units for the values, e.g., "%" if they are percentages adding to 100
+            units: Units for the values, e.g., "%" if they are percentages adding to 100
         """
         total = sum(values)
-        kpi = KPI(
-            is_vector=True,
-            has_total=True,
-            name=name,
-            title=title,
-            units=units,
-            values=values,
-            labels=labels,
-            total=total,
-            total_label=total_label,
+        self._add_kpi_vector(
+            name,
+            dict(
+                values=values,
+                labels=labels,
+                title=title,
+                units=[units],
+                total=total,
+                has_total=True,
+                is_table=False,
+                total_label=total_label,
+            ),
         )
-        self.kpis[name] = kpi
-        self.kpi_order.append(name)
 
     def set_kpi_default_options(self, **options: object) -> None:
         self.kpi_options = options
@@ -676,6 +695,7 @@ class Actions(str, Enum):
     export = "_export"
     diagram = "diagram"
     initialize = "initialize"
+    kpis = "kpis"
 
 
 class FlowsheetCategory(str, Enum):
@@ -685,11 +705,26 @@ class FlowsheetCategory(str, Enum):
     desalination = "Desalination"
 
 
+class FlowsheetReport(abc.ABC):
+    """Abstract base class for flowsheet reports.
+
+    This class defines the interface for generating reports from a flowsheet.
+    Subclasses should implement the `to_html` method to generate the report in HTML format.
+    """
+
+    @abc.abstractmethod
+    def to_html(self, **kwargs: object) -> str:
+        """Return report as an HTML string."""
+        pass
+
+
 class FlowsheetInterface:
     """Interface between users, UI developers, and flowsheet models."""
 
     #: Function to look for in modules. See :meth:`find`.
     UI_HOOK = "export_to_ui"
+
+    _KPI_REPORT = "Key Performance Indicators"
 
     #: Type of item in list ``MissingObjectError.missing``.
     #: ``key`` is the unique key assigned to the variable,
@@ -722,6 +757,7 @@ class FlowsheetInterface:
         do_export: Optional[Callable] = None,
         do_solve: Optional[Callable] = None,
         do_initialize: Optional[Callable] = None,
+        do_kpis: Optional[Callable] = None,
         get_diagram: Optional[Callable] = None,
         category: Optional["FlowsheetCategory"] = None,
         custom_do_param_sweep_kwargs: Optional[Dict] = None,
@@ -741,6 +777,7 @@ class FlowsheetInterface:
                 This will be called automatically by :meth:`build()`. **Required**
             do_solve: Function to solve the model. It should return the result
                 that the solver itself returns. **Required**
+            do_kpis: Function to set KPIs.
             custom_do_param_sweep_kwargs: Option for setting up parallel solver using
                 custom solve function.
             **kwargs: See `fs` arg. If the `fs` arg *is* provided, these are ignored.
@@ -764,6 +801,12 @@ class FlowsheetInterface:
                 self.add_action(getattr(Actions, name), arg)
             else:
                 raise ValueError(f"'do_{name}' argument is required")
+        report_types = []
+        # optional kpis
+        if callable(do_kpis):
+            self.add_action(Actions.kpis, do_kpis)
+            report_types.append(self._KPI_REPORT)
+        # optional diagram
         if callable(get_diagram):
             self.add_action("diagram", get_diagram)
         else:
@@ -771,10 +814,14 @@ class FlowsheetInterface:
 
         self._actions["custom_do_param_sweep_kwargs"] = custom_do_param_sweep_kwargs
 
-    def build(self, **kwargs: object) -> None:
+        # for selecting report types
+        self._report_prefix = ShortPrefix(report_types)
+
+    def build(self, quiet=False, **kwargs: object) -> None:
         """Build flowsheet
 
         Args:
+            quiet: If true, suppress output from the build function
             **kwargs: User-defined values
 
         Returns:
@@ -784,9 +831,23 @@ class FlowsheetInterface:
             RuntimeError: If the build fails
         """
         try:
-            self.run_action(Actions.build, **kwargs)
-        except Exception as err:
-            raise RuntimeError(f"Building flowsheet: {err}") from err
+            if quiet:
+                _save_loglevel = _log.getEffectiveLevel()
+                _log.setLevel(logging.WARNING)
+                idaes_log = logging.getLogger("idaes")
+                _save_idaes_loglevel = idaes_log.getEffectiveLevel()
+                idaes_log.setLevel(logging.WARNING)
+                _save_stdout = sys.stdout
+                sys.stdout = open(os.devnull, "w")
+            try:
+                self.run_action(Actions.build, **kwargs)
+            except Exception as err:
+                raise RuntimeError(f"Building flowsheet: {err}") from err
+        finally:
+            if quiet:
+                sys.stdout = _save_stdout
+                _log.setLevel(_save_loglevel)
+                idaes_log.setLevel(_save_idaes_loglevel)
         return
 
     def solve(self, **kwargs: object) -> Any:
@@ -961,10 +1022,10 @@ class FlowsheetInterface:
         Returns:
             None
         """
+        _log.debug(f"adding action: {action_name}")
 
-        # print(f'ADDING ACTION: {action_name}')
-        # print(action_func)
         def action_wrapper(*args, **kwargs):
+            _log.debug(f"running action: {action_name}")
             if action_name == Actions.build:
                 # set new model object from return value of build action
                 action_result = action_func(**kwargs)
@@ -989,6 +1050,7 @@ class FlowsheetInterface:
                 self.get_action(Actions.export)(
                     exports=self.fs_exp, build_options=self.fs_exp.build_options
                 )
+                # done
                 result = None
             elif action_name == Actions.diagram:
                 self._actions[action_name] = action_func
@@ -1002,8 +1064,11 @@ class FlowsheetInterface:
                     f"'{Actions.build}') before flowsheet is built"
                 )
             else:
-                result = action_func(flowsheet=self.fs_exp.obj, **kwargs)
-                # Issue 755: Report optimization errors
+                if action_name == Actions.kpis:
+                    result = action_func(exports=self.fs_exp, flowsheet=self.fs_exp.obj)
+                else:
+                    # all others, call with flowsheet object
+                    result = action_func(flowsheet=self.fs_exp.obj, **kwargs)
                 if action_name == Actions.solve:
                     _log.debug(f"Solve result: {result}")
                     if result is None:
@@ -1013,6 +1078,13 @@ class FlowsheetInterface:
             # Sync model with exported values
             if action_name in (Actions.build, Actions.solve, Actions.initialize):
                 self.export_values()
+                # (re-)add KPIs if any specified
+                if Actions.kpis in self._actions:
+                    _log.info("Calculating and exporting KPIs")
+                    self.fs_exp.clear_kpis()
+                    self.run_action(Actions.kpis, self.fs_exp)
+                else:
+                    _log.info("No KPIs present")
             return result
 
         self._actions[action_name] = action_wrapper
@@ -1167,19 +1239,38 @@ class FlowsheetInterface:
         # Return created FlowsheetInterface
         return interface
 
-    def report(self, **kwargs: object) -> "FlowsheetReport":
-        """Create HTML flowsheet report.
+    def report(self, rtype=_KPI_REPORT, **kwargs: object) -> FlowsheetReport:
+        """Generate and return a report for the flowsheet.
+
+
 
         Args:
-            kwargs: Additional keywords passed to :class:`FlowsheetReport`
+            report_type: Type of report to generate (any unique prefix of the report type).
+            kwargs: Additional keywords passed to the given report type.
 
         Raises:
-            ValueError: If the total_type argument is invalid
+            ValueError: If a report argument is invalid
 
         Returns:
             FlowsheetReport: A flowsheet report, which will display automatically in Jupyter Notebooks.
         """
-        return FlowsheetReport(self.fs_exp, **kwargs)
+        m = self._report_prefix.match(rtype)
+        if m is None:
+            cbe = self._report_prefix.could_be(rtype)
+            if cbe:
+                raise ValueError(
+                    f"Report type prefix '{rtype}' has multiple matches: {', '.join(cbe)}"
+                )
+            else:
+                raise ValueError(
+                    f"Unknown report type '{rtype}'. "
+                    f"Valid types are: {', '.join(self._report_prefix.words)}"
+                )
+        if m == self._KPI_REPORT:
+            return FlowsheetKPIReport(self.fs_exp, **kwargs)
+        else:
+            # should never happen, since we already checked the prefix
+            raise RuntimeError("Unknown report type: {report_type}")
 
 
 class _ChartTypes(Enum):
@@ -1191,7 +1282,7 @@ WAFFLE = _ChartTypes.waffle
 DONUT = _ChartTypes.donut
 
 
-class FlowsheetReport:
+class FlowsheetKPIReport(FlowsheetReport):
     """Report of the Key Performance Indicators (KPIs) for a flowsheet.
 
     The specification of the report is extracted from the FlowsheetExport object
@@ -1232,7 +1323,7 @@ class FlowsheetReport:
             self._init_options["total_type"] = total_type
         self._bgcolor = bgcolor
 
-    def html(self, layout: Optional[Any] = None, **kwargs: object) -> str:
+    def to_html(self, layout: Optional[Any] = None, **kwargs: object) -> str:
         """Build the report and return as a complete <HTML> element.
 
         Args:
@@ -1242,24 +1333,33 @@ class FlowsheetReport:
         Returns:
             HTML for the report
         """
-        body, css = self.build(layout=layout, **kwargs)
+        figures = self.get_kpi_figures(**kwargs)
+        figures_html = {key: val.to_html() for key, val in figures.items()}
+        # if no provided layout, put each item in its own row
+        if layout is None and self._init_layout is not None:
+            layout = self._init_layout
+        spec = layout if layout else [[key] for key in self._kpi_ord]
+        _log.debug(f"layout spec={spec}")
+        # perform the layout
+        layout_obj = Layout(spec, figures_html)
+        body, css = layout_obj.body, layout_obj.css
+
         # return HTML
         report_css = f"body {{background-color: '{self._bgcolor}';}}"
         html_head = f"<head><style>{report_css}\n{css}</style></head>"
         html_body = f"<body>{body}</body>"
         return f"<html>{html_head}{html_body}</html>"
 
-    _repr_html_ = html  # display automatically in Jupyter Notebooks
+    _repr_html_ = to_html  # display automatically in Jupyter Notebooks
 
-    def build(self, layout: Optional[Any] = None, **kwargs: object) -> Tuple[str, str]:
-        """Build the report.
+    def get_kpi_figures(self, **kwargs: object) -> dict[str, go.Figure]:
+        """ "Get figures for each KPI.
 
         Args:
-            layout: Layout specification. See :class:`Layout` for format. If not given, lay out in one column.
             kwargs: Options for the `create_*` methods.
 
         Returns:
-            A pair of two strings: html body, CSS styles
+
         """
         # combine options from user settings, constructor, and this method
         options = {}
@@ -1269,18 +1369,10 @@ class FlowsheetReport:
         # special processing for total_type, if given
         if "total_type" in options:
             options["total_type"] = self._preprocess_total_type(options["total_type"])
-        # get HTML block for each KPI
-        kpi_map = {
-            key: self._kpi_html(kpi, **options) for key, kpi in self._kpis.items()
+        # get figure for each KPI
+        return {
+            key: self._kpi_figure(kpi, **options) for key, kpi in self._kpis.items()
         }
-        # if no provided layout, put each item in its own row
-        if layout is None and self._init_layout is not None:
-            layout = self._init_layout
-        spec = layout if layout else [[key] for key in self._kpi_ord]
-        _log.debug(f"layout spec={spec}")
-        # perform the layout
-        layout_obj = Layout(spec, kpi_map)
-        return layout_obj.body, layout_obj.css
 
     @staticmethod
     def _preprocess_total_type(v: object) -> _ChartTypes:
@@ -1299,34 +1391,85 @@ class FlowsheetReport:
         return v
 
     @classmethod
-    def _kpi_html(cls, kpi: KPI, **options: object) -> str:
-        """Get HTML for one KPI.
+    def _kpi_figure(cls, kpi: KPI, **options: object) -> go.Figure:
+        """Get Figure for one KPI.
 
         Args:
             options: Keyword options for the `create_*` method called
                      to create this KPI.
         """
-        if kpi.is_vector:
+        if not kpi.is_table:
             if kpi.has_total:
-                item = cls.create_total(kpi, **options)
+                item = cls.create_kpi_total(kpi, **options)
             else:
-                item = cls.create_barchart(kpi, **options)
+                item = cls.create_kpi_barchart(kpi, **options)
         else:
-            item = cls.create_value(kpi, **options)
+            item = cls.create_kpi_values(kpi, **options)
         return item
 
     @classmethod
-    def create_barchart(cls, kpi: KPI, **ignore: object) -> str:
+    def create_kpi_values(
+        cls,
+        kpi,
+        font_size: int = 24,
+        width: int = 800,
+        margin: Optional[int] = None,
+        **ignore: object,
+    ) -> go.Figure:
+        """Create a table with values for each KPI.
+
+        Args:
+            kpi
+            font_size: Font size for the table, in points
+            width: Width of the table in pixels
+            margin: Margin around the table, as a dict with keys 't', 'b', 'l', 'r'. Values in pixels.
+
+        Returns:
+            Plotly Figure object with values in a table
+        """
+        row_height = int(font_size * 1.5)
+        colors = ["#9999ff", "black"]
+        if kpi.units is None:
+            values = kpi.values
+        else:
+            values = [f"{v} {u}" for u, v in zip(kpi.units, kpi.values)]
+        value_columns = [kpi.labels, values]
+        data = [
+            {
+                "type": "table",
+                "header": {
+                    "values": [],
+                    "fill": {"color": "rgba(0,0,0,0)"},
+                    "height": 0,
+                },
+                "cells": {
+                    "values": value_columns,
+                    "align": "center",
+                    "height": row_height,
+                    "font": {"family": "Arial", "size": font_size, "color": colors},
+                    "fill": {"color": "white"},
+                },
+            }
+        ]
+        layout = {
+            "width": width,
+            "margin": margin or {"t": 20, "b": 20, "l": 20},
+            "height": 64 + row_height * len(kpi.labels),
+        }
+        return go.Figure(data, layout=layout)
+
+    @classmethod
+    def create_kpi_barchart(cls, kpi: KPI, **ignore: object) -> go.Figure:
         """Create a barchart from a vector of values
 
         Args:
             kpi: Key performance indicator
 
         Returns:
-            HTML of the figure
+            Plotly Figure object with the bar chart
         """
         df = pd.DataFrame(dict(y=kpi.values, x=kpi.labels))
-        u = f" ({kpi.units})"
+        u = f" ({kpi.units[0]})"
         fig = px.bar(
             df,
             x="x",
@@ -1334,12 +1477,12 @@ class FlowsheetReport:
             labels={"x": kpi.xlab, "y": kpi.ylab + u},
             title=kpi.title,
         )
-        return fig.to_html()
+        return fig
 
     @classmethod
-    def create_total(
+    def create_kpi_total(
         cls, kpi: KPI, total_type: _ChartTypes = WAFFLE, **ignore: object
-    ) -> str:
+    ) -> go.Figure:
         """Create diagram for a vector that should be represented as parts of a total.
         This will be either a pie (donut) chart or waffle chart.
 
@@ -1347,13 +1490,14 @@ class FlowsheetReport:
             kpi: Key performance indicator
 
         Returns:
-            HTML of the figure
+            Plotly Figure object with the pie or waffle chart
         """
+        kpi.units = kpi.units[0]
         if total_type == DONUT:
             fig = px.pie(names=kpi.labels, values=kpi.values, hole=0.5, title=kpi.title)
         else:  # total_type == _ChartTypes.waffle
             fig = cls._waffle_chart(kpi)
-        return fig.to_html()
+        return fig
 
     @classmethod
     def _waffle_chart(cls, kpi: KPI) -> Any:
@@ -1438,46 +1582,6 @@ class FlowsheetReport:
             legend_title_font_color="#666",
         )
         return fig
-
-    @classmethod
-    def create_value(
-        cls, kpi: KPI, fmtspec: str = ".6f", stack: bool = True, **ignore: object
-    ) -> str:
-        """Create 'diagram' for a single value.
-
-        Args:
-            kpi: Key performance indicator
-            fmtspec (str, optional): Format specification for the value. Defaults to ".6f".
-            stack (bool): Whether label and value should be stacked vertically
-
-        Returns:
-            HTML of the figure
-        """
-        value = kpi.values[0]  # it's always a list of length 1
-        fvalue = format(value, fmtspec)
-        # represent units
-        if kpi.units:
-            u = kpi.units
-            if u != "%":
-                u = f" ({u})"
-        else:
-            u = ""
-        # style label and value
-        title_span = (
-            f"<span style='font-size: {cls.VALUE_FONT_NAME_SIZE}; "
-            + f"color: {cls.VALUE_FONT_NAME_COLOR}'>{kpi.title}</span>"
-        )
-        val_span = (
-            f"<span style='font-size: {cls.VALUE_FONT_VAL_SIZE}; "
-            + f"color: {cls.VALUE_FONT_VAL_COLOR}'>{fvalue}{u}</span>"
-        )
-        if stack:
-            chunk = f"{title_span}<br/>{val_span}"
-        else:
-            sep = f"<span style='margin-left: {cls.VALUE_SEP_WIDTH}'>&nbsp;</span>"
-            chunk = f"{title_span}{sep}{val_span}"
-        p = f"<p style='margin-left: 2em'>{chunk}</p>"
-        return p
 
 
 class Layout:
