@@ -1,3 +1,8 @@
+"""
+Utility functions.
+"""
+
+from typing import Union
 from collections import defaultdict
 
 
@@ -51,7 +56,7 @@ class ShortPrefix:
         """Get the list of words that were used to construct the prefix map."""
         return self._words
 
-    def match(self, s: str) -> str | None:
+    def match(self, s: str) -> Union[str, None]:
         """Find the unique word for a given prefix string.
 
         Returns:
