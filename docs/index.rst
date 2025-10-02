@@ -7,6 +7,6 @@ Contents
 .. toctree::
    :maxdepth: 3
 
-   technical_reference/index
+   autoapi/index
 
 * :ref:`genindex`
