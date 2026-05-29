@@ -309,7 +309,7 @@ class FlowsheetExport(BaseModel):
     @computed_field
     @property
     def dof(self) -> int:
-        return degrees_of_freedom(self.m)
+        return degrees_of_freedom(self.m) if self.m is not None else None
 
     # set name dynamically from object
     @field_validator("name")
