@@ -46,7 +46,14 @@ except ImportError:
 
 # third-party
 from idaes.core.util.model_statistics import degrees_of_freedom
-from pydantic import BaseModel, Field, field_validator, ValidationInfo, ConfigDict, computed_field
+from pydantic import (
+    BaseModel,
+    Field,
+    field_validator,
+    ValidationInfo,
+    ConfigDict,
+    computed_field,
+)
 import pyomo.environ as pyo
 import plotly.express as px
 import plotly.graph_objects as go

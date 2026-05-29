@@ -24,7 +24,6 @@ ModuleName: TypeAlias = str
 
 
 class IsValidEntryPoint(pytest.Item):
-
     def __init__(self, *, entry_point: EntryPoint, **kwargs):
         super().__init__(**kwargs)
         self.entry_point = entry_point
