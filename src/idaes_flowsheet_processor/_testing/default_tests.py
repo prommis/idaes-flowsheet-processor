@@ -3,7 +3,6 @@ from idaes_flowsheet_processor.api import FlowsheetInterface
 
 
 class TestFlowsheetInterface:
-
     def test_instance(self, flowsheet_interface):
         assert isinstance(flowsheet_interface, FlowsheetInterface)
 

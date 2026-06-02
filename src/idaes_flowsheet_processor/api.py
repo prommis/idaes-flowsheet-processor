@@ -46,7 +46,14 @@ except ImportError:
 
 # third-party
 from idaes.core.util.model_statistics import degrees_of_freedom
-from pydantic import BaseModel, Field, field_validator, ValidationInfo, ConfigDict
+from pydantic import (
+    BaseModel,
+    Field,
+    field_validator,
+    ValidationInfo,
+    ConfigDict,
+    computed_field,
+)
 import pyomo.environ as pyo
 import plotly.express as px
 import plotly.graph_objects as go
@@ -296,9 +303,13 @@ class FlowsheetExport(BaseModel):
     kpi_figures: Dict = {}
     version: int = 2
     requires_idaes_solver: bool = False
-    dof: int = 0
     sweep_results: Union[None, dict] = {}
     build_options: Dict[str, ModelOption] = {}
+
+    @computed_field
+    @property
+    def dof(self) -> int:
+        return degrees_of_freedom(self.m) if self.m is not None else None
 
     # set name dynamically from object
     @field_validator("name")
@@ -987,8 +998,6 @@ class FlowsheetInterface:
                 if dst.num_samples != src.num_samples:
                     dst.num_samples = src.num_samples
 
-        # update degrees of freedom (dof)
-        self.fs_exp.dof = degrees_of_freedom(self.fs_exp.obj)
         if missing:
             raise self.MissingObjectError(missing)
 
@@ -1121,7 +1130,6 @@ class FlowsheetInterface:
         """
         _log.info("Exporting values from flowsheet model to UI")
         u = pyo.units
-        self.fs_exp.dof = degrees_of_freedom(self.fs_exp.obj)
         for key, mo in self.fs_exp.exports.items():
             mo.value = pyo.value(u.convert(mo.obj, to_units=mo.ui_units))
             # print(f'{key} is being set to: {mo.value}')
