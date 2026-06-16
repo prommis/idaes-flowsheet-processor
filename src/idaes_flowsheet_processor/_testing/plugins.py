@@ -226,7 +226,8 @@ class IdaesFlowsheetsPlugin:
             )
 
     @pytest.fixture(scope="class")
-    def flowsheet_interface(self, request: pytest.FixtureRequest) -> FlowsheetInterface:
+    @classmethod
+    def flowsheet_interface(cls, request: pytest.FixtureRequest) -> FlowsheetInterface:
         module_name: str = request.param
         interface = FlowsheetInterface.from_module(module_name)
         return interface
