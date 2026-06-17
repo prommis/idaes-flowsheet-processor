@@ -21,8 +21,8 @@ jobs:
     # OS and/or Python version don't make a difference, so we choose ubuntu and 3.12 as defaults
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.11'
       - name: Install Black
@@ -47,7 +47,6 @@ jobs:
           - dev
           # - standard
         python-version:
-          # - "3.9"
           - "3.10"
           - "3.11"
           - "3.12"
@@ -69,10 +68,10 @@ jobs:
 
     steps:
       - if: matrix.install-mode == 'dev'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
-      - uses: conda-incubator/setup-miniconda@v3
+      - uses: conda-incubator/setup-miniconda@v4
         with:
           python-version: ${{ matrix.python-version }}
           miniforge-version: latest
@@ -100,7 +99,7 @@ jobs:
           pytest --pyargs idaes_flowsheet_processor --verbose
       - name: Upload coverage report as job artifact
         if: matrix.coverage
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-report-${{ matrix.os }}
           path: coverage.xml
