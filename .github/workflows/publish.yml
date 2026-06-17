@@ -12,8 +12,6 @@ defaults:
 env:
   PYTEST_ADDOPTS: --color=yes
   PIP_PROGRESS_BAR: "off"
-  PACKAGE_NAME: idaes-flowsheet-processor
-  IMPORT_NAME: idaes_flowsheet_processor
   PYTHON_VERSION: "3.13"
 
 jobs:
@@ -52,7 +50,7 @@ jobs:
 
   test-whl:
     needs: [build]
-    name: Test ${{ env.PACKAGE_NAME }} from .whl file
+    name: Test idaes-flowsheet-processor from .whl file
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v8
@@ -88,7 +86,7 @@ jobs:
 
           print(f"{name=}\n{tag=}\n{normalized_tag=}\n{pkg_version=}")
           assert version(name) == normalized_tag
-          ' "${{ env.PACKAGE_NAME }}" "${{ github.ref_name }}"
+          ' "idaes-flowsheet-processor" "${{ github.ref_name }}"
 
       - name: Run tests
         working-directory: /tmp
@@ -96,7 +94,7 @@ jobs:
           pip install pytest
           pip install "watertap @ git+https://github.com/watertap-org/watertap@main"
           idaes get-extensions --verbose
-          pytest --pyargs ${{ env.IMPORT_NAME }} -vrs
+          pytest --pyargs idaes-flowsheet-processor -vrs
 
   upload-test-pypi:
     needs: [test-whl]
@@ -124,11 +122,11 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: Install ${{ env.PACKAGE_NAME }}==${{ github.ref_name }} from test PyPI
+      - name: Install idaes-flowsheet-processor==${{ github.ref_name }} from test PyPI
         env:
           _wait_time_s: 15
           _pip_install_flags: --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/
-          _pip_install_target: ${{ env.PACKAGE_NAME }}==${{ github.ref_name }}
+          _pip_install_target: idaes-flowsheet-processor==${{ github.ref_name }}
         run: |
           until pip install $_pip_install_flags "$_pip_install_target"
           do
@@ -141,7 +139,7 @@ jobs:
           pip install pytest
           pip install "watertap @ git+https://github.com/watertap-org/watertap@main"
           idaes get-extensions --verbose
-          pytest --pyargs ${{ env.IMPORT_NAME }} -vrs
+          pytest --pyargs idaes-flowsheet-processor -vrs
 
   upload-pypi:
     needs: [install-test-pypi]
@@ -174,11 +172,11 @@ jobs:
         with:
           miniforge-version: latest
           activate-environment: idaes-flowsheet-processor-${{ github.ref_name }}
-          python-version: "3.13"
+          python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: Install ${{ env.PACKAGE_NAME }}==${{ github.ref_name }}
+      - name: Install idaes-flowsheet-processor==${{ github.ref_name }}
         run: |
-          pip install "${{ env.PACKAGE_NAME }}==${{ github.ref_name }}"
+          pip install "idaes-flowsheet-processor==${{ github.ref_name }}"
 
       - name: Create output directory
         run: mkdir "$OUTPUT_DIR"
