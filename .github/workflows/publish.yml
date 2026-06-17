@@ -94,7 +94,7 @@ jobs:
           pip install pytest
           pip install "watertap @ git+https://github.com/watertap-org/watertap@main"
           idaes get-extensions --verbose
-          pytest --pyargs idaes-flowsheet-processor -vrs
+          pytest --pyargs idaes_flowsheet_processor -vrs
 
   upload-test-pypi:
     needs: [test-whl]
@@ -139,7 +139,7 @@ jobs:
           pip install pytest
           pip install "watertap @ git+https://github.com/watertap-org/watertap@main"
           idaes get-extensions --verbose
-          pytest --pyargs idaes-flowsheet-processor -vrs
+          pytest --pyargs idaes_flowsheet_processor -vrs
 
   upload-pypi:
     needs: [install-test-pypi]
@@ -172,7 +172,7 @@ jobs:
         with:
           miniforge-version: latest
           activate-environment: idaes-flowsheet-processor-${{ github.ref_name }}
-          python-version: ${{ env.PYTHON_VERSION }}
+          python-version: "3.13"
 
       - name: Install idaes-flowsheet-processor==${{ github.ref_name }}
         run: |
