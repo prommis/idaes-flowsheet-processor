@@ -12,6 +12,6 @@ numpy >= 2
 astroid < 4
 IPython
 
-watertap @ git+https://github.com/watertap-org/watertap@c85d853a14df7dd0158d37d773d646297a9d93d6
+watertap @ git+https://github.com/watertap-org/watertap@1322e198ba82fd1314456c7b69b46069c379c100
 
 --editable .[testing]

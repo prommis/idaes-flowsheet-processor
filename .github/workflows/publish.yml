@@ -92,7 +92,7 @@ jobs:
         working-directory: /tmp
         run: |
           pip install pytest
-          pip install "watertap @ git+https://github.com/watertap-org/watertap@c85d853a14df7dd0158d37d773d646297a9d93d6"
+          pip install "watertap @ git+https://github.com/watertap-org/watertap@1322e198ba82fd1314456c7b69b46069c379c100"
           idaes get-extensions --verbose
           pytest --pyargs idaes_flowsheet_processor -vrs
 
