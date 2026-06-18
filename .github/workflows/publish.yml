@@ -12,7 +12,7 @@ defaults:
 env:
   PYTEST_ADDOPTS: --color=yes
   PIP_PROGRESS_BAR: "off"
-  PYTHON_VERSION: "3.11"
+  PYTHON_VERSION: "3.12"
 
 jobs:
   build:
@@ -25,7 +25,7 @@ jobs:
       # setting python-version to avoid warnings
       - uses: actions/setup-python@v6
         with:
-          python-version: "3.11"
+          python-version: "3.12"
 
       - name: Generate dist files
         run: |
@@ -62,7 +62,7 @@ jobs:
         uses: actions/setup-python@v6
         # pick a python version that you used for testing
         with:
-          python-version: "3.11"
+          python-version: "3.12"
 
       - name: Install from .whl file
         run: |
@@ -89,7 +89,7 @@ jobs:
           ' "idaes-flowsheet-processor" "${{ github.ref_name }}"
 
       - name: Run tests
-        working-directory: /tmp
+        working-directory: /tmp    
         run: |
           pip install pytest
           pip install "watertap @ git+https://github.com/watertap-org/watertap@main"
@@ -120,7 +120,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version: "3.11"
+          python-version: "3.12"
 
       - name: Install idaes-flowsheet-processor==${{ github.ref_name }} from test PyPI
         env:
@@ -172,7 +172,7 @@ jobs:
         with:
           miniforge-version: latest
           activate-environment: idaes-flowsheet-processor-${{ github.ref_name }}
-          python-version: "3.11"
+          python-version: "3.12"
 
       - name: Install idaes-flowsheet-processor==${{ github.ref_name }}
         run: |
