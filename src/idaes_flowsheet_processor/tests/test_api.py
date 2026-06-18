@@ -53,7 +53,7 @@ class SOLVE_RESULT_OK:
     solver = SOLVE_STATUS
 
 
-def build_ro(build_options=None, **kwargs):
+def build(build_options=None, **kwargs):
     model = RO.build_flowsheet(erd_type=ERD_TYPE)
     return model
 
@@ -109,7 +109,7 @@ def flowsheet_interface(exports=True, solve_func=solve_ro):
         kwargs["do_export"] = export_to_ui
     return fsapi.FlowsheetInterface(
         # leave out name and description to test auto-fill
-        do_build=build_ro,
+        do_build=build,
         do_solve=solve_func,
         **kwargs,
     )
@@ -171,7 +171,7 @@ def test_actions(add_variant: str):
         nonlocal built
         built = True
         nonlocal m
-        m = build_ro()
+        m = build()
         return m
 
     def fake_solve(flowsheet=None):
@@ -227,7 +227,7 @@ def test_csv_exports():
             CSVTestSettings.bad_obj, CSVTestSettings.bad_units = False, False
         for export_func in (csv_from_tempfile, csv_from_localfile):
             fsi = fsapi.FlowsheetInterface(
-                do_build=build_ro, do_solve=solve_ro, do_export=export_func
+                do_build=build, do_solve=solve_ro, do_export=export_func
             )
             if i == 0:
                 fsi.build()  # expect success
