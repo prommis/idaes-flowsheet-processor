@@ -16,7 +16,7 @@ env:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code to be packaged
@@ -51,7 +51,7 @@ jobs:
   test-whl:
     needs: [build]
     name: Test idaes-flowsheet-processor from .whl file
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v8
         with:
@@ -98,7 +98,7 @@ jobs:
 
   upload-test-pypi:
     needs: [test-whl]
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     permissions:
       id-token: write
     environment: test-release
@@ -113,7 +113,7 @@ jobs:
           repository-url: https://test.pypi.org/legacy/
 
   install-test-pypi:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     needs: [upload-test-pypi]
 
     steps:
@@ -143,7 +143,7 @@ jobs:
 
   upload-pypi:
     needs: [install-test-pypi]
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     permissions:
       id-token: write
     environment: release
@@ -159,7 +159,7 @@ jobs:
   env-snapshot:
     name: Create and collect env snapshot
     needs: [upload-pypi]
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     permissions:
       contents: write
     env:
