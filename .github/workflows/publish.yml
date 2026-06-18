@@ -200,7 +200,7 @@ jobs:
         run: ls -la "$OUTPUT_DIR/"
 
       - name: Save as workflow artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ env.ENV_NAME }}
           path: ${{ env.OUTPUT_DIR }}/
