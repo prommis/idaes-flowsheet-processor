@@ -54,7 +54,7 @@ class SOLVE_RESULT_OK:
 
 
 def build(build_options=None, **kwargs):
-    model = RO.build_flowsheet(erd_type=ERD_TYPE)
+    model = RO.main(erd_type=ERD_TYPE)
     return model
 
 
