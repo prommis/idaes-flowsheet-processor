@@ -38,14 +38,12 @@ import sys
 from typing import Any, Callable, List, Optional, Dict, Tuple, Union, TypeVar
 from types import ModuleType
 
-
 try:
     from importlib import metadata
 except ImportError:
     import importlib_metadata as metadata
 
 # third-party
-from idaes.core.util.model_statistics import degrees_of_freedom
 from pydantic import (
     BaseModel,
     Field,
@@ -309,6 +307,13 @@ class FlowsheetExport(BaseModel):
     @computed_field
     @property
     def dof(self) -> int:
+        # Deferred import is a temporary fix to an issue where Pytest
+        # imported the flowsheet processor before beginning to track
+        # code coverage. Because so many IDAES files were being
+        # indirectly imported by importing degrees_of_freedom, it caused
+        # IDAES's code coverage to decrease dramatically.
+        from idaes.core.util.model_statistics import degrees_of_freedom
+
         return degrees_of_freedom(self.m) if self.m is not None else None
 
     # set name dynamically from object
